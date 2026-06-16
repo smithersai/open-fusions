@@ -5,7 +5,7 @@ import { approveNode, denyNode, loadOutputs, runWorkflow } from "smithers-orches
 import { resolveAgent } from "./agents";
 import { buildPipeline, MAX_REVIEW_ITERATIONS, type AgentFor } from "./pipeline";
 
-export type EnginePhase = "plan" | "implement" | "review" | "fix" | "done" | "stopped";
+export type EnginePhase = "plan" | "implement" | "review" | "fix" | "done" | "stopped" | "exhausted";
 
 export type EngineState = {
   runId: string;
@@ -98,7 +98,9 @@ export class OpenFusionsEngine {
 }
 
 function genRunId(): string {
-  return `of-${Date.now()}-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
+  // UUID, not Date.now()+Math.random(): two runs started in the same process/ms
+  // must not collide on a run id (and thus on their durable db path).
+  return `of-${crypto.randomUUID()}`;
 }
 
 async function readOutputs(api: { db: unknown; tables: unknown }, runId: string): Promise<Outputs> {
@@ -153,5 +155,9 @@ export function deriveStateFromOutputs(runId: string, status: string, outs: Outp
     if (!decided(`fix-${k}-gate`)) return mk("fix", `fix-${k}-gate`, k, false, fOut);
     if (!approved(`fix-${k}-gate`)) return mk("stopped", null, k, false, fOut);
   }
-  return mk("done", null, MAX_REVIEW_ITERATIONS, true, undefined);
+  // Exhausted the review→fix budget without ever reaching LGTM. This is NOT a
+  // success: report it as a distinct terminal phase with lgtm=false (never
+  // claim done/lgtm=true), surfacing the last fix for the caller to inspect.
+  const lastFix = synth("fix", `fix-${MAX_REVIEW_ITERATIONS - 1}`);
+  return mk("exhausted", null, MAX_REVIEW_ITERATIONS, false, lastFix);
 }
