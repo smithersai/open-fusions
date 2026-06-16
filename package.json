@@ -54,7 +54,7 @@
   "dependencies": {
     "effect": "^3.21.1",
     "incur": "^0.4.8",
-    "smithers-orchestrator": "^0.23.0",
+    "smithers-orchestrator": "^0.24.0",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
