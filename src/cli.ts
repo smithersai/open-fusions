@@ -1,24 +1,38 @@
+import { existsSync } from "node:fs";
 import { Cli, z } from "incur";
-import { defaultPanel } from "./agents";
+import { defaultJudge, defaultPanel } from "./agents";
+import { OpenFusionsEngine } from "./engine";
 import { runFusion, type FuseResult } from "./fusion";
-import {
-  defaultPhaseFusion,
-  runFix,
-  runImplement,
-  runPlan,
-  runReview,
-  type PhaseFusion,
-} from "./phases";
-import { fix, implementation, plan, reviewVerdict, sessionState } from "./schemas";
-import { SessionStore } from "./session";
-import type { FusionConfig } from "./types";
+import type { ModelSpec, FusionConfig } from "./types";
 
 export type CliDeps = {
-  fusion: PhaseFusion;
-  store: SessionStore;
+  engine: OpenFusionsEngine;
   fuseRaw: (config: FusionConfig & { prompt: string }) => Promise<FuseResult>;
-  getDiff: (cwd?: string) => string;
 };
+
+const looseOutput = z.unknown();
+
+const ctaSchema = z
+  .object({
+    description: z.string(),
+    commands: z.array(z.object({ command: z.string(), description: z.string() })),
+  })
+  .optional();
+
+const baseCommandOutput = {
+  session: z.string(),
+  phase: z.string(),
+  cta: ctaSchema,
+};
+
+const judgmentOutput = z.object({
+  consensus: z.array(z.string()),
+  contradictions: z.array(z.object({ topic: z.string(), positions: z.array(z.string()) })),
+  uniqueInsights: z.array(z.object({ model: z.string(), insight: z.string() })),
+  blindSpots: z.array(z.string()),
+  recommendation: z.string(),
+  confidence: z.enum(["low", "medium", "high"]),
+});
 
 const panelOutput = z.array(
   z.object({
@@ -28,38 +42,167 @@ const panelOutput = z.array(
   }),
 );
 
-const judgmentOutput = z.object({
-  consensus: z.array(z.string()),
-  contradictions: z.array(
-    z.object({
-      topic: z.string(),
-      positions: z.array(z.string()),
-    }),
-  ),
-  uniqueInsights: z.array(
-    z.object({
-      model: z.string(),
-      insight: z.string(),
-    }),
-  ),
-  blindSpots: z.array(z.string()),
-  recommendation: z.string(),
-  confidence: z.enum(["low", "medium", "high"]),
-});
-
 export function createCli(deps?: Partial<CliDeps>) {
-  const resolved: CliDeps = {
-    fusion: deps?.fusion ?? defaultPhaseFusion,
-    store: deps?.store ?? new SessionStore(),
-    fuseRaw: deps?.fuseRaw ?? runFusion,
-    getDiff: deps?.getDiff ?? defaultGetDiff,
-  };
+  const engine = deps?.engine ?? new OpenFusionsEngine();
+  const fuseRaw = deps?.fuseRaw ?? runFusion;
 
   const cli = Cli.create("open-fusions", {
     version: "0.0.0",
-    description: "Run local model fusions and advance the plan-implement-review-fix loop.",
+    description: "Run local model fusions and advance the durable plan-implement-review-fix loop.",
     sync: {
       suggestions: ["plan a change with a fusion", "review my branch with a fusion"],
+    },
+  });
+
+  cli.command("plan", {
+    description: "Plan a change with a fusion (starts a durable run).",
+    args: z.object({ task: z.string().describe("Task to run through the coding loop") }),
+    options: z.object({
+      panel: z.string().optional().describe("Comma-separated model ids"),
+      judge: z.string().optional().describe("Judge model id"),
+      session: z.string().optional().describe("Optional run id to use"),
+    }),
+    output: z.object({ ...baseCommandOutput, plan: looseOutput }),
+    examples: [{ args: { task: "add rate limiting" }, description: "Plan a change and start a run" }],
+    async run(c) {
+      const panel = splitList(c.options.panel) ?? defaultPanel().map(idOf);
+      const judge = c.options.judge ?? idOf(defaultJudge());
+      const st = await engine.start(c.args.task, { panel, judge }, c.options.session);
+      return c.ok(
+        { session: st.runId, phase: st.phase, plan: st.output },
+        { cta: nextCta("Next:", `implement --session ${st.runId}`, "Run the implementation fusion") },
+      );
+    },
+  });
+
+  cli.command("implement", {
+    description: "Advance a durable run through implementation.",
+    options: z.object({ session: z.string() }),
+    output: z.object({ ...baseCommandOutput, implementation: looseOutput }),
+    examples: [{ options: { session: "of-123" }, description: "Run implementation" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+
+      const cur = await engine.state(c.options.session);
+      if (cur.phase !== "plan") {
+        return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
+      }
+
+      const st = await engine.advance(c.options.session);
+      return c.ok(
+        { session: c.options.session, phase: st.phase, implementation: st.output },
+        { cta: nextCta("Next:", `review --session ${c.options.session}`, "Run the review fusion") },
+      );
+    },
+  });
+
+  cli.command("review", {
+    description: "Advance a durable run through review.",
+    options: z.object({ session: z.string() }),
+    output: z.object({
+      ...baseCommandOutput,
+      verdict: looseOutput,
+      lgtm: z.boolean(),
+    }),
+    examples: [{ options: { session: "of-123" }, description: "Run review" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+
+      const cur = await engine.state(c.options.session);
+      if (cur.phase !== "implement" && cur.phase !== "fix") {
+        return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
+      }
+
+      const st = await engine.advance(c.options.session);
+      if (st.lgtm === true) {
+        const done = await engine.advance(c.options.session);
+        return c.ok(
+          { session: c.options.session, phase: done.phase, verdict: st.output, lgtm: true },
+          { cta: nextCta("Done - LGTM", `result --session ${c.options.session}`, "Show the final result") },
+        );
+      }
+
+      return c.ok(
+        { session: c.options.session, phase: "review", verdict: st.output, lgtm: false },
+        { cta: nextCta("Next:", `fix --session ${c.options.session}`, "Run the fix fusion") },
+      );
+    },
+  });
+
+  cli.command("fix", {
+    description: "Advance a durable run through fix.",
+    options: z.object({ session: z.string() }),
+    output: z.object({ ...baseCommandOutput, fix: looseOutput }),
+    examples: [{ options: { session: "of-123" }, description: "Run fix" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+
+      const cur = await engine.state(c.options.session);
+      if (!(cur.phase === "review" && cur.lgtm === false)) {
+        return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
+      }
+
+      const st = await engine.advance(c.options.session);
+      return c.ok(
+        { session: c.options.session, phase: st.phase, fix: st.output },
+        { cta: nextCta("Next:", `review --session ${c.options.session}`, "Review the fixed changes") },
+      );
+    },
+  });
+
+  cli.command("reject", {
+    description: "Deny the pending durable gate and stop the run.",
+    options: z.object({
+      session: z.string(),
+      note: z.string().optional(),
+    }),
+    output: z.object({ session: z.string(), phase: z.string() }),
+    examples: [{ options: { session: "of-123" }, description: "Reject the pending gate" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+      const st = await engine.advance(c.options.session, "deny", c.options.note);
+      return c.ok({ session: c.options.session, phase: st.phase });
+    },
+  });
+
+  cli.command("status", {
+    description: "Show durable run status.",
+    options: z.object({ session: z.string() }),
+    output: z.object({
+      session: z.string(),
+      phase: z.string(),
+      iteration: z.number(),
+      lgtm: z.boolean().nullable(),
+      pendingGate: z.string().nullable(),
+    }),
+    examples: [{ options: { session: "of-123" }, description: "Check run status" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+      const st = await engine.state(c.options.session);
+      return c.ok({
+        session: c.options.session,
+        phase: st.phase,
+        iteration: st.iteration,
+        lgtm: st.lgtm,
+        pendingGate: st.pendingGate,
+      });
+    },
+  });
+
+  cli.command("result", {
+    description: "Show the current durable run output.",
+    options: z.object({ session: z.string() }),
+    output: z.object({
+      session: z.string(),
+      phase: z.string(),
+      lgtm: z.boolean().nullable(),
+      output: looseOutput,
+    }),
+    examples: [{ options: { session: "of-123" }, description: "Show run output" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+      const st = await engine.state(c.options.session);
+      return c.ok({ session: c.options.session, phase: st.phase, lgtm: st.lgtm, output: st.output });
     },
   });
 
@@ -77,225 +220,68 @@ export function createCli(deps?: Partial<CliDeps>) {
     }),
     examples: [{ args: { prompt: "Compare these approaches" }, description: "Run a raw fusion" }],
     async run(c) {
-      const config: FusionConfig & { prompt: string } = {
+      const panel = splitList(c.options.panel);
+      const result = await fuseRaw({
         prompt: c.args.prompt,
-        panel: c.options.panel ? splitPanel(c.options.panel) : defaultPanel(),
+        panel: panel ?? defaultPanel(),
         ...(c.options.judge ? { judge: c.options.judge } : undefined),
-      };
-      const result = await resolved.fuseRaw(config);
-
-      return c.ok({
-        answer: result.answer,
-        judgment: result.judgment,
-        panel: result.panel,
       });
-    },
-  });
-
-  cli.command("plan", {
-    description: "Plan a change with a fusion.",
-    args: z.object({ task: z.string().describe("Task to plan") }),
-    options: z.object({ session: z.string().optional() }),
-    output: z.object({
-      session: z.string(),
-      phase: z.string(),
-      plan,
-    }),
-    examples: [{ args: { task: "add rate limiting" }, description: "Plan a change" }],
-    async run(c) {
-      const session = c.options.session
-        ? resolved.store.load(c.options.session)
-        : resolved.store.create({ task: c.args.task });
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      const result = await runPlan(session, resolved);
-      const id = result.session.id;
-      return c.ok(
-        {
-          session: id,
-          phase: result.session.phase,
-          plan: result.session.plan!,
-        },
-        { cta: nextCta("Next:", `implement --session ${id}`, "Run the implementation fusion") },
-      );
-    },
-  });
-
-  cli.command("implement", {
-    description: "Implement the current session plan with a fusion.",
-    options: z.object({ session: z.string() }),
-    output: z.object({
-      session: z.string(),
-      phase: z.string(),
-      implementation,
-    }),
-    examples: [
-      { options: { session: "s-123" }, description: "Implement the next session phase" },
-    ],
-    async run(c) {
-      const session = resolved.store.load(c.options.session);
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      const result = await runImplement(session, resolved);
-      const id = result.session.id;
-      return c.ok(
-        {
-          session: id,
-          phase: result.session.phase,
-          implementation: result.session.implementation!,
-        },
-        { cta: nextCta("Next:", `review --session ${id}`, "Run the review fusion") },
-      );
-    },
-  });
-
-  cli.command("review", {
-    description: "Review the current implementation diff with a fusion.",
-    options: z.object({
-      session: z.string(),
-      diff: z.string().optional(),
-    }),
-    output: z.object({
-      session: z.string(),
-      phase: z.string(),
-      verdict: reviewVerdict,
-      lgtm: z.boolean(),
-    }),
-    examples: [{ options: { session: "s-123" }, description: "Review the session changes" }],
-    async run(c) {
-      const session = resolved.store.load(c.options.session);
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      const diff = c.options.diff ?? resolved.getDiff();
-      const result = await runReview(session, resolved, undefined, diff);
-      const id = result.session.id;
-      const verdict = result.session.lastReview!;
-      const command = verdict.lgtm ? `result --session ${id}` : `fix --session ${id}`;
-      const description = verdict.lgtm ? "LGTM - done" : "Run the fix fusion";
-
-      return c.ok(
-        {
-          session: id,
-          phase: result.session.phase,
-          verdict,
-          lgtm: verdict.lgtm,
-        },
-        { cta: nextCta("Next:", command, description) },
-      );
-    },
-  });
-
-  cli.command("fix", {
-    description: "Fix review issues with a fusion.",
-    options: z.object({ session: z.string() }),
-    output: z.object({
-      session: z.string(),
-      phase: z.string(),
-      fix,
-    }),
-    examples: [{ options: { session: "s-123" }, description: "Fix the session review issues" }],
-    async run(c) {
-      const session = resolved.store.load(c.options.session);
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      const result = await runFix(session, resolved);
-      const id = result.session.id;
-      return c.ok(
-        {
-          session: id,
-          phase: result.session.phase,
-          fix: fix.parse(result.output),
-        },
-        { cta: nextCta("Next:", `review --session ${id}`, "Review the fixed changes") },
-      );
-    },
-  });
-
-  cli.command("status", {
-    description: "Show the current session status.",
-    options: z.object({ session: z.string() }),
-    output: z.object({
-      session: z.string(),
-      task: z.string(),
-      phase: z.string(),
-      iteration: z.number(),
-      lgtm: z.boolean().nullable(),
-    }),
-    examples: [{ options: { session: "s-123" }, description: "Check session status" }],
-    run(c) {
-      const session = resolved.store.load(c.options.session);
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      return c.ok({
-        session: session.id,
-        task: session.task,
-        phase: session.phase,
-        iteration: session.iteration,
-        lgtm: session.lastReview?.lgtm ?? null,
-      });
-    },
-  });
-
-  cli.command("result", {
-    description: "Show the full session result.",
-    options: z.object({ session: z.string() }),
-    output: sessionState,
-    examples: [{ options: { session: "s-123" }, description: "Show final session result" }],
-    run(c) {
-      const session = resolved.store.load(c.options.session);
-      if (!session) {
-        return missingSession(c, c.options.session);
-      }
-
-      return c.ok(session);
+      return c.ok({ answer: result.answer, judgment: result.judgment, panel: result.panel });
     },
   });
 
   return cli;
 }
 
-function splitPanel(panel: string): string[] {
-  return panel
+function idOf(spec: ModelSpec): string {
+  return typeof spec === "string" ? spec : spec.id;
+}
+
+function splitList(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const models = value
     .split(",")
     .map((model) => model.trim())
     .filter((model) => model.length > 0);
+  return models.length > 0 ? models : undefined;
 }
 
-function defaultGetDiff(cwd?: string): string {
-  try {
-    const result = Bun.spawnSync(["git", "diff"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (result.exitCode !== 0) {
-      return "";
-    }
-
-    return new TextDecoder().decode(result.stdout);
-  } catch {
-    return "";
-  }
+function commandFor(phase: string): string {
+  if (phase === "plan") return "implement";
+  if (phase === "implement" || phase === "fix") return "review";
+  if (phase === "review") return "fix";
+  return "result";
 }
 
 function missingSession(
   c: { error(input: { code: string; message: string; retryable: boolean }): never },
-  id: string | undefined,
+  id: string,
 ): never {
   return c.error({
     code: "SESSION_NOT_FOUND",
-    message: `Session not found: ${id ?? "(missing)"}`,
+    message: `Session not found: ${id}`,
     retryable: false,
+  });
+}
+
+function wrongPhase(
+  c: {
+    error(input: {
+      code: string;
+      message: string;
+      retryable: boolean;
+      cta: { description: string; commands: { command: string; description: string }[] };
+    }): never;
+  },
+  id: string,
+  command: string,
+  description: string,
+): never {
+  return c.error({
+    code: "WRONG_PHASE",
+    message: `Wrong phase for this command. Run ${command} --session ${id}.`,
+    retryable: false,
+    cta: nextCta("Next:", `${command} --session ${id}`, description),
   });
 }
 
