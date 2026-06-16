@@ -42,8 +42,8 @@ separate command** the driving agent calls one at a time:
 ```
 plan ──▶◇   implement ──▶◇   review ──▶◇
                                   │
-                        lgtm? ─no─▶ fix ──▶◇ ──▶ (back to review)
-                        yes──▶ done
+                        lgtm? ─no─▶ fix ──▶◇ ──▶ (back to review, max 5 rounds)
+                        yes──▶ done   ·   5 rounds without lgtm ──▶ exhausted
 ◇ = an approval gate the agent clears by calling the next command.
 ```
 
@@ -130,9 +130,9 @@ open-fusions review --session of-…
 # 4. FIX — a fusion synthesizes fixes for the issues (you apply them)
 open-fusions fix --session of-…
 
-# 5. REVIEW again — loop until the panel agrees
+# 5. REVIEW again — loop until the panel agrees (bounded to 5 review→fix rounds)
 open-fusions review --session of-…
-# → lgtm: true ✅
+# → lgtm: true ✅   |   5 rounds without lgtm → phase: "exhausted" (lgtm: false)
 ```
 
 ### Inspect, resume, or abandon
@@ -151,7 +151,9 @@ Because the run is durable, any command runs in a fresh process and resumes the 
 - **One command per step.** Plan, then stop. Implement, then stop. The run carries state.
 - **You make the edits.** `implement` and `fix` return synthesized guidance, not file
   writes — apply the changes, then call the next command.
-- **Don't skip `review`.** Loop fix → review until LGTM; the panel catches what one model misses.
+- **Don't skip `review`.** Loop fix → review until LGTM; the panel catches what one model
+  misses. The loop is bounded to 5 review→fix rounds — if it never agrees the run ends in
+  the `exhausted` phase (`lgtm: false`) carrying the last fix, not a false `done`.
 - **Follow the CTA.** Every response names the exact next command.
 - **Widen the panel for hard problems** with `--panel` / `--judge`.
 
