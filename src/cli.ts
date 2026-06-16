@@ -3,7 +3,7 @@ import { Cli, z } from "incur";
 import { defaultJudge, defaultPanel } from "./agents";
 import { OpenFusionsEngine } from "./engine";
 import { runFusion, type FuseResult } from "./fusion";
-import type { ModelSpec, FusionConfig } from "./types";
+import type { FusionConfig } from "./types";
 
 export type CliDeps = {
   engine: OpenFusionsEngine;
@@ -58,15 +58,26 @@ export function createCli(deps?: Partial<CliDeps>) {
     description: "Plan a change with a fusion (starts a durable run).",
     args: z.object({ task: z.string().describe("Task to run through the coding loop") }),
     options: z.object({
-      panel: z.string().optional().describe("Comma-separated model ids"),
-      judge: z.string().optional().describe("Judge model id"),
+      panel: z
+        .string()
+        .optional()
+        .describe(
+          "Comma-separated models: account labels, subscription providers (claude-code, codex, gemini), or openrouter:<vendor/model> / compat:<model>. Defaults to your registered subscriptions.",
+        ),
+      judge: z.string().optional().describe("Judge model (same id forms as --panel)"),
       session: z.string().optional().describe("Optional run id to use"),
     }),
     output: z.object({ ...baseCommandOutput, plan: looseOutput }),
     examples: [{ args: { task: "add rate limiting" }, description: "Plan a change and start a run" }],
     async run(c) {
-      const panel = splitList(c.options.panel) ?? defaultPanel().map(idOf);
-      const judge = c.options.judge ?? idOf(defaultJudge());
+      let panel: string[];
+      let judge: string;
+      try {
+        panel = splitList(c.options.panel) ?? defaultPanel();
+        judge = c.options.judge ?? defaultJudge();
+      } catch (e) {
+        return noModels(c, e);
+      }
       const st = await engine.start(c.args.task, { panel, judge }, c.options.session);
       return c.ok(
         { session: st.runId, phase: st.phase, plan: st.output },
@@ -210,8 +221,13 @@ export function createCli(deps?: Partial<CliDeps>) {
     description: "Run one raw fusion prompt.",
     args: z.object({ prompt: z.string().describe("Prompt to run through the fusion") }),
     options: z.object({
-      panel: z.string().optional().describe("Comma-separated model ids"),
-      judge: z.string().optional().describe("Judge model id"),
+      panel: z
+        .string()
+        .optional()
+        .describe(
+          "Comma-separated models: account labels, subscription providers (claude-code, codex, gemini), or openrouter:<vendor/model> / compat:<model>. Defaults to your registered subscriptions.",
+        ),
+      judge: z.string().optional().describe("Judge model (same id forms as --panel)"),
     }),
     output: z.object({
       answer: z.string(),
@@ -220,10 +236,15 @@ export function createCli(deps?: Partial<CliDeps>) {
     }),
     examples: [{ args: { prompt: "Compare these approaches" }, description: "Run a raw fusion" }],
     async run(c) {
-      const panel = splitList(c.options.panel);
+      let panel: string[];
+      try {
+        panel = splitList(c.options.panel) ?? defaultPanel();
+      } catch (e) {
+        return noModels(c, e);
+      }
       const result = await fuseRaw({
         prompt: c.args.prompt,
-        panel: panel ?? defaultPanel(),
+        panel,
         ...(c.options.judge ? { judge: c.options.judge } : undefined),
       });
       return c.ok({ answer: result.answer, judgment: result.judgment, panel: result.panel });
@@ -231,10 +252,6 @@ export function createCli(deps?: Partial<CliDeps>) {
   });
 
   return cli;
-}
-
-function idOf(spec: ModelSpec): string {
-  return typeof spec === "string" ? spec : spec.id;
 }
 
 function splitList(value: string | undefined): string[] | undefined {
@@ -282,6 +299,20 @@ function wrongPhase(
     message: `Wrong phase for this command. Run ${command} --session ${id}.`,
     retryable: false,
     cta: nextCta("Next:", `${command} --session ${id}`, description),
+  });
+}
+
+function noModels(
+  c: { error(input: { code: string; message: string; retryable: boolean }): never },
+  e: unknown,
+): never {
+  // The message already names `smithers agents add` (a separate CLI). No `cta`
+  // here: incur prefixes the bin name to cta commands, which would mislead it
+  // into `open-fusions smithers agents add`.
+  return c.error({
+    code: "NO_MODELS",
+    message: e instanceof Error ? e.message : String(e),
+    retryable: false,
   });
 }
 

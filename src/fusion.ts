@@ -196,9 +196,10 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
 }
 
 export async function runFusion(config: FusionConfig & { prompt: string }): Promise<FuseResult> {
+  const env = config.env;
   const panel = buildPanel(config);
-  const judge = memberFor(config.judge ?? defaultJudge());
-  const synthesizer = memberFor(config.synthesizer ?? config.judge ?? defaultJudge());
+  const judge = memberFor(config.judge ?? defaultJudge(env), env);
+  const synthesizer = memberFor(config.synthesizer ?? config.judge ?? defaultJudge(env), env);
 
   return fuse({
     prompt: config.prompt,
@@ -208,11 +209,11 @@ export async function runFusion(config: FusionConfig & { prompt: string }): Prom
   });
 }
 
-function memberFor(spec: ModelSpec): PanelMember {
+function memberFor(spec: ModelSpec, env?: NodeJS.ProcessEnv): PanelMember {
   return {
     id: resolveModelSpec(spec).id,
     spec,
-    agent: resolveAgent(spec) as AgentLike,
+    agent: resolveAgent(spec, env) as AgentLike,
   };
 }
 

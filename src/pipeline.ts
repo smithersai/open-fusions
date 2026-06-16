@@ -23,8 +23,9 @@ export type PhaseRole = "panelist" | "judge" | "synthesizer";
 /**
  * Resolves a model id + the role it plays into an agent. Injectable so tests can
  * supply deterministic stubs and skip the network. Model ids are plain strings
- * (e.g. a subscription harness like `claude-code` or any smithers/OpenRouter id),
- * persisted in the run input so the workflow is byte-identical on every resume.
+ * (a subscription harness like `claude-code`, a registered account label, or an
+ * opt-in `openrouter:`/`compat:` id), persisted in the run input so the workflow
+ * is byte-identical on every resume.
  */
 export type AgentFor = (modelId: string, role: PhaseRole) => AgentLike;
 
