@@ -8,6 +8,8 @@ import { panelistPrompt } from "./prompts/panelist";
 import { planPrompt } from "./prompts/plan";
 import { reviewPrompt } from "./prompts/review";
 import { synthesizePrompt } from "./prompts/synthesize";
+import { safeCoerce } from "./coerce";
+import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS } from "./fusion";
 import { fix, implementation, judgment, panelResponse, plan, reviewVerdict } from "./schemas";
 import type { Fix, Implementation, Judgment, PanelResponse, Plan, ReviewVerdict } from "./schemas";
 import type { AgentLike } from "./types";
@@ -31,6 +33,10 @@ export type AgentFor = (modelId: string, role: PhaseRole) => AgentLike;
 
 export type PipelineDeps = {
   agentFor: AgentFor;
+  /** Retries per task before failure; total attempts = retries + 1 (default {@link DEFAULT_RETRIES}). */
+  retries?: number;
+  /** Per-task timeout in ms (default {@link DEFAULT_TIMEOUT_MS}). */
+  timeoutMs?: number;
 };
 
 /** Durable schemas for the whole plan→implement→review→fix run. */
@@ -60,8 +66,8 @@ const emptyJudgment: Judgment = {
   confidence: "low",
 };
 
-function changesToText(summary: string, changes: { file: string; description: string }[]): string {
-  return [summary, ...changes.map((c) => `- ${c.file}: ${c.description}`)].join("\n");
+function changesToText(summary: string, changes: { file: string; description: string }[] | undefined): string {
+  return [summary ?? "", ...(changes ?? []).map((c) => `- ${c.file}: ${c.description}`)].join("\n");
 }
 
 /**
@@ -84,6 +90,12 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
     { dbPath },
   );
   const { Workflow, Sequence, Parallel, Task, Approval, smithers, outputs } = api;
+  // Bound retries/runtime so a permanently-failing model (e.g. a stale account
+  // model the provider 400s) fails fast instead of retrying forever (smithers
+  // defaults an agent Task to retries: Infinity) and hanging a durable run that
+  // resumes the identical tree on every process.
+  const retries = deps.retries ?? DEFAULT_RETRIES;
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const workflow = smithers((ctx) => {
     const { task, panel, judge } = ctx.input;
@@ -99,18 +111,21 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
         const id = `${prefix}-p-${i}`;
         return h(
           Task,
-          { id, output: outputs.panelResponse, agent: deps.agentFor(modelId, "panelist"), children: panelistPrompt(prompt, modelId) },
+          { id, output: outputs.panelResponse, agent: deps.agentFor(modelId, "panelist"), retries, timeoutMs, continueOnFail: true, children: panelistPrompt(prompt, modelId) },
           id,
         );
       });
+      // Validate/recover each persisted row instead of trusting a truthiness
+      // cast — a malformed or double-encoded panel row must not flow into the
+      // judge prompt as if it were a valid PanelResponse.
       const responses = panel
-        .map((_, i) => ctx.outputMaybe(outputs.panelResponse, { nodeId: `${prefix}-p-${i}` }))
-        .filter((r): r is PanelResponse => Boolean(r));
-      const judgeRow = (ctx.outputMaybe(outputs.judgment, { nodeId: `${prefix}-judge` }) as Judgment | undefined) ?? emptyJudgment;
+        .map((_, i) => safeCoerce(panelResponse, ctx.outputMaybe(outputs.panelResponse, { nodeId: `${prefix}-p-${i}` })))
+        .filter((r): r is PanelResponse => r !== undefined);
+      const judgeRow = safeCoerce(judgment, ctx.outputMaybe(outputs.judgment, { nodeId: `${prefix}-judge` })) ?? emptyJudgment;
       return [
-        h(Parallel, { maxConcurrency: panel.length, continueOnFail: true, children: panelEls }, `${prefix}-panel`),
-        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: deps.agentFor(judge, "judge"), children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
-        h(Task, { id: `${prefix}-synth`, output: synthKey, agent: deps.agentFor(synthSpec, "synthesizer"), children: synthesizePrompt(prompt, judgeRow, responses) }, `${prefix}-synth`),
+        h(Parallel, { maxConcurrency: panel.length, children: panelEls }, `${prefix}-panel`),
+        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: deps.agentFor(judge, "judge"), retries, timeoutMs, continueOnFail: true, children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
+        h(Task, { id: `${prefix}-synth`, output: synthKey, agent: deps.agentFor(synthSpec, "synthesizer"), retries, timeoutMs, continueOnFail: true, children: synthesizePrompt(prompt, judgeRow, responses) }, `${prefix}-synth`),
       ];
     };
     const gate = (nodeId: string, title: string, summary?: string): unknown =>
@@ -121,7 +136,7 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
     // 1. PLAN
     children.push(...fusion("plan", planPrompt(task), outputs.plan));
     const planOut = synthRow<Plan>(outputs.plan, "plan");
-    if (planOut) children.push(gate("plan-gate", "Approve the plan?", planOut.steps[0]?.title));
+    if (planOut) children.push(gate("plan-gate", "Approve the plan?", planOut.steps?.[0]?.title));
 
     // 2. IMPLEMENT
     if (gateApproved("plan-gate") && planOut) {
