@@ -1,7 +1,6 @@
 import { approvalDecisionSchema, createSmithers, SmithersDb } from "smithers-orchestrator";
 import { jsx as rawJsx, jsxs as rawJsxs } from "smithers-orchestrator/jsx-runtime";
 import { z } from "zod";
-import { resolveModelSpec } from "./agents";
 import { fixPrompt } from "./prompts/fix";
 import { implementPrompt } from "./prompts/implement";
 import { judgePrompt } from "./prompts/judge";
@@ -11,7 +10,7 @@ import { reviewPrompt } from "./prompts/review";
 import { synthesizePrompt } from "./prompts/synthesize";
 import { fix, implementation, judgment, panelResponse, plan, reviewVerdict } from "./schemas";
 import type { Fix, Implementation, Judgment, PanelResponse, Plan, ReviewVerdict } from "./schemas";
-import type { AgentLike, ModelSpec } from "./types";
+import type { AgentLike } from "./types";
 
 const h = rawJsx;
 const hs = rawJsxs;
@@ -22,21 +21,25 @@ export const MAX_REVIEW_ITERATIONS = 5;
 export type PhaseRole = "panelist" | "judge" | "synthesizer";
 
 /**
- * Resolves a model spec + the role it plays into an agent. Injectable so tests
- * can supply deterministic stubs and skip the network.
+ * Resolves a model id + the role it plays into an agent. Injectable so tests can
+ * supply deterministic stubs and skip the network. Model ids are plain strings
+ * (e.g. a subscription harness like `claude-code` or any smithers/OpenRouter id),
+ * persisted in the run input so the workflow is byte-identical on every resume.
  */
-export type AgentFor = (spec: ModelSpec, role: PhaseRole) => AgentLike;
+export type AgentFor = (modelId: string, role: PhaseRole) => AgentLike;
 
 export type PipelineDeps = {
   agentFor: AgentFor;
-  panel: ModelSpec[];
-  judge: ModelSpec;
-  synthesizer?: ModelSpec;
 };
 
 /** Durable schemas for the whole plan→implement→review→fix run. */
 export const pipelineSchemas = {
-  input: z.object({ task: z.string() }),
+  input: z.object({
+    task: z.string(),
+    panel: z.array(z.string()),
+    judge: z.string(),
+    synthesizer: z.string().optional(),
+  }),
   panelResponse,
   judgment,
   plan,
@@ -67,9 +70,8 @@ function changesToText(summary: string, changes: { file: string; description: st
  * driving agent advances it one step (one process) at a time. The review→fix
  * loop repeats until a review returns `lgtm`.
  *
- * Every phase reads only persisted run state (task → plan → implementation →
- * review issues → fix), so the run is fully self-contained and resumable across
- * processes by `runId`.
+ * The panel/judge model ids and the task all live in the persisted run input, so
+ * the rendered tree is identical on every process that resumes the run by id.
  */
 export function buildPipeline(dbPath: string, deps: PipelineDeps) {
   // createSmithers' return type is generic over the schema set and is too deep for
@@ -81,10 +83,10 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
     { dbPath },
   );
   const { Workflow, Sequence, Parallel, Task, Approval, smithers, outputs } = api;
-  const synthSpec = deps.synthesizer ?? deps.judge;
 
   const workflow = smithers((ctx) => {
-    const task = ctx.input.task;
+    const { task, panel, judge } = ctx.input;
+    const synthSpec = ctx.input.synthesizer ?? judge;
     const gateApproved = (nodeId: string): boolean =>
       (ctx.outputMaybe(outputs.gate, { nodeId }) as { approved?: boolean } | undefined)?.approved === true;
     const synthRow = <T>(key: unknown, prefix: string): T | undefined =>
@@ -92,21 +94,21 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
 
     // A fusion sub-tree for one phase: N panelists in parallel → judge → synthesize.
     const fusion = (prefix: string, prompt: string, synthKey: unknown): unknown[] => {
-      const panelEls = deps.panel.map((spec, i) => {
+      const panelEls = panel.map((modelId, i) => {
         const id = `${prefix}-p-${i}`;
         return h(
           Task,
-          { id, output: outputs.panelResponse, agent: deps.agentFor(spec, "panelist"), children: panelistPrompt(prompt, resolveModelSpec(spec).id) },
+          { id, output: outputs.panelResponse, agent: deps.agentFor(modelId, "panelist"), children: panelistPrompt(prompt, modelId) },
           id,
         );
       });
-      const responses = deps.panel
+      const responses = panel
         .map((_, i) => ctx.outputMaybe(outputs.panelResponse, { nodeId: `${prefix}-p-${i}` }))
         .filter((r): r is PanelResponse => Boolean(r));
       const judgeRow = (ctx.outputMaybe(outputs.judgment, { nodeId: `${prefix}-judge` }) as Judgment | undefined) ?? emptyJudgment;
       return [
-        h(Parallel, { maxConcurrency: deps.panel.length, continueOnFail: true, children: panelEls }, `${prefix}-panel`),
-        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: deps.agentFor(deps.judge, "judge"), children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
+        h(Parallel, { maxConcurrency: panel.length, continueOnFail: true, children: panelEls }, `${prefix}-panel`),
+        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: deps.agentFor(judge, "judge"), children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
         h(Task, { id: `${prefix}-synth`, output: synthKey, agent: deps.agentFor(synthSpec, "synthesizer"), children: synthesizePrompt(prompt, judgeRow, responses) }, `${prefix}-synth`),
       ];
     };
@@ -157,7 +159,7 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
 }
 
 type PipelineCtx = {
-  input: { task: string };
+  input: { task: string; panel: string[]; judge: string; synthesizer?: string };
   outputMaybe: (key: unknown, opts: { nodeId: string }) => unknown;
 };
 

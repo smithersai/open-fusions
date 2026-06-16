@@ -4,7 +4,6 @@ import { Effect } from "effect";
 import { approveNode, denyNode, loadOutputs, runWorkflow } from "smithers-orchestrator";
 import { resolveAgent } from "./agents";
 import { buildPipeline, MAX_REVIEW_ITERATIONS, type AgentFor } from "./pipeline";
-import type { ModelSpec } from "./types";
 
 export type EnginePhase = "plan" | "implement" | "review" | "fix" | "done" | "stopped";
 
@@ -26,11 +25,15 @@ export type EngineState = {
 export type EngineOptions = {
   /** Directory holding the per-run durable databases. Default `.open-fusions`. */
   dir?: string;
-  /** Resolve a model spec + role to an agent. Injectable so tests use stubs. */
+  /** Resolve a model id + role to an agent. Injectable so tests use stubs. */
   agentFor?: AgentFor;
-  panel: ModelSpec[];
-  judge: ModelSpec;
-  synthesizer?: ModelSpec;
+};
+
+/** Panel/judge configuration for a run; persisted in the run input. */
+export type RunConfig = {
+  panel: string[];
+  judge: string;
+  synthesizer?: string;
 };
 
 type Row = Record<string, unknown> & { nodeId?: string };
@@ -44,16 +47,10 @@ type Outputs = Record<string, Row[] | undefined>;
 export class OpenFusionsEngine {
   readonly dir: string;
   private readonly agentFor: AgentFor;
-  private readonly panel: ModelSpec[];
-  private readonly judge: ModelSpec;
-  private readonly synthesizer?: ModelSpec;
 
-  constructor(opts: EngineOptions) {
+  constructor(opts: EngineOptions = {}) {
     this.dir = opts.dir ?? process.env.OPEN_FUSIONS_DIR ?? ".open-fusions";
-    this.agentFor = opts.agentFor ?? ((spec) => resolveAgent(spec));
-    this.panel = opts.panel;
-    this.judge = opts.judge;
-    this.synthesizer = opts.synthesizer;
+    this.agentFor = opts.agentFor ?? ((modelId) => resolveAgent(modelId));
   }
 
   dbPathFor(runId: string): string {
@@ -62,19 +59,16 @@ export class OpenFusionsEngine {
 
   private pipeline(runId: string) {
     mkdirSync(this.dir, { recursive: true });
-    return buildPipeline(this.dbPathFor(runId), {
-      agentFor: this.agentFor,
-      panel: this.panel,
-      judge: this.judge,
-      synthesizer: this.synthesizer,
-    });
+    return buildPipeline(this.dbPathFor(runId), { agentFor: this.agentFor });
   }
 
   /** Start a new durable run; produces the plan and pauses at the plan gate. */
-  async start(task: string, runId = genRunId()): Promise<EngineState> {
+  async start(task: string, config: RunConfig, runId = genRunId()): Promise<EngineState> {
     const { workflow, api } = this.pipeline(runId);
+    const input: Record<string, unknown> = { task, panel: config.panel, judge: config.judge };
+    if (config.synthesizer) input.synthesizer = config.synthesizer;
     const res = (await Effect.runPromise(
-      runWorkflow(workflow as never, { input: { task }, runId, logDir: join(this.dir, "logs") }) as never,
+      runWorkflow(workflow as never, { input, runId, logDir: join(this.dir, "logs") }) as never,
     )) as { status: string };
     return deriveStateFromOutputs(runId, res.status, await readOutputs(api, runId));
   }

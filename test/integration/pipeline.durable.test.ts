@@ -53,18 +53,13 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 test("durable pipeline advances plan→implement→review→fix→review→done across separate engine builds", async () => {
   // A fresh engine per call models a fresh process resuming the same durable run.
-  const engineOpts = {
-    dir,
-    agentFor: makeStubAgentFor(),
-    panel: ["model/a", "model/b"],
-    judge: "model/judge",
-  };
   // Reuse one stub closure (its reviewCount must persist) but rebuild the engine each step.
   const sharedAgentFor = makeStubAgentFor();
-  const newEngine = () => new OpenFusionsEngine({ ...engineOpts, agentFor: sharedAgentFor });
+  const newEngine = () => new OpenFusionsEngine({ dir, agentFor: sharedAgentFor });
+  const config = { panel: ["model/a", "model/b"], judge: "model/judge" };
 
   // PLAN
-  const started = await newEngine().start("add rate limiting", "run-1");
+  const started = await newEngine().start("add rate limiting", config, "run-1");
   expect(started.phase).toBe("plan");
   expect(started.pendingGate).toBe("plan-gate");
   expect((started.output as { steps: unknown[] }).steps.length).toBeGreaterThan(0);
