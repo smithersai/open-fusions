@@ -25,9 +25,10 @@ output, `--panel "a,b,c"` and `--judge "id"` to pick models.
 
 ## The coding loop (one fusion per step)
 
-You apply the edits. open-fusions is the fusion brain: it plans, it reviews your diff,
-and it synthesizes fixes. Call one command per step. Each command prints a **Next:**
-call-to-action with the exact command to run next — follow it.
+You apply the edits. open-fusions is the fusion brain: it plans, it reviews the
+change summary each step synthesizes (a `{ summary, changes: [{file, description}] }`
+list, not a literal code diff), and it synthesizes fixes. Call one command per step.
+Each command prints a **Next:** call-to-action with the exact command to run next — follow it.
 
 1. **Plan.** A fusion drafts the plan and opens a session.
    ```sh
@@ -60,7 +61,12 @@ Check state any time:
 ```sh
 open-fusions status --session <id>    # phase, iteration, lgtm
 open-fusions result --session <id>    # full plan + implementation + last review
+open-fusions resume --session <id>    # recover a run interrupted mid-step (crash)
 ```
+
+If a command returns `code: "NEEDS_RESUME"`, the run was interrupted mid-step — run
+`resume` to drive it to the next gate, then continue. A `code: "RUN_TERMINAL"` means the
+run is already done/stopped/exhausted — inspect it with `result`.
 
 ## Operating rules for the agent
 

@@ -140,11 +140,14 @@ open-fusions review --session of-…
 ```sh
 open-fusions status --session of-…   # phase, iteration, lgtm, pending gate
 open-fusions result --session of-…   # the current phase's synthesized output
+open-fusions resume --session of-…   # recover a run interrupted mid-step (crash recovery)
 open-fusions reject --session of-…   # deny the pending gate and stop the run
 ```
 
 Because the run is durable, any command runs in a fresh process and resumes the same run by
-`--session`.
+`--session`. If a process is killed *during* a fusion (between gates), `resume` drives the
+in-flight step to its next gate; a normal command also tells you to run `resume` when it
+detects an interrupted run.
 
 ### Operating rules
 

@@ -55,29 +55,33 @@ bun run build            # tsup -> dist + bin
 bun run dev -- <args>    # run the CLI from source (bun src/bin.ts)
 ```
 
-## Module layout (create these)
+## Module layout (actual)
 
 ```
 src/
-  index.ts             # public exports (fuse, Session, types, schemas)
+  index.ts             # public API allowlist (explicit re-exports — NOT `export *`)
   bin.ts               # #!/usr/bin/env bun  -> import cli; cli.serve()
-  cli.ts               # incur Cli: commands start/plan/implement/review/fix/status/result/fuse
-  schemas.ts           # zod schemas (panelResponse, judgment, finalAnswer, plan, implementation, reviewVerdict, fix, session)
-  types.ts             # TS types: ModelSpec, PanelMember, FusionConfig, FusionResult, Phase, SessionState, Engine
-  agents.ts            # resolveAgent(spec) -> AgentLike; buildPanel(config) -> PanelMember[]
-  fusion.tsx           # <Fusion> JSX subtree + fuse() programmatic wrapper
+  cli.ts               # incur Cli: commands plan/implement/review/fix/resume/reject/status/result/fuse
+  schemas.ts           # zod schemas (panelResponse, judgment, finalAnswer, plan, implementation, reviewVerdict, fix)
+  types.ts             # TS types: ModelSpec, ModelSpecObject, NormalizedModelSpec, ModelProvider, AgentLike, PanelMember, FusionConfig, FusionResult
+  agents.ts            # resolveAgent(spec) -> AgentLike; buildPanel/defaultPanel/defaultJudge; account registry resolution
+  coerce.ts            # coerceToSchema/safeCoerce — recover schema-valid data from CLI-harness-mangled model output
+  errors.ts            # FusionError, NoModelsError
+  fusion.ts            # fuse()/fuseWith() — one durable smithers run (panel→judge→synth) on a temp db, read + cleanup
+  pipeline.ts          # buildPipeline(): the ONE durable plan→impl→review→fix workflow with <Approval> gates
+  engine.ts            # OpenFusionsEngine: start/advance/resume/state; deriveStateFromOutputs (pure phase deriver)
+  outputs.ts           # readOutputs(dbPath, runId, table) via bun:sqlite — used by fusion.ts (the engine reads via loadOutputs)
   prompts/
     panelist.ts judge.ts synthesize.ts plan.ts implement.ts review.ts fix.ts   # pure prompt builders
-  outputs.ts           # readOutputs(dbPath, runId, table) via bun:sqlite (loadOutputs is NOT in the barrel)
-  engine/
-    types.ts           # Engine interface (start/advance/approve/status/outputs)
-    smithers-cli.ts    # CliEngine: drives the bundled `smithers` CLI via Bun.spawn
-    mock.ts            # MockEngine for unit tests
-  session.ts           # SessionStore: persist SessionState keyed by id (json under .open-fusions/)
 test/
-  unit/*.test.ts        # bun:test, stub agents + MockEngine, no network/smithers runtime
-  integration/*.test.ts # bun:test, real smithers via stub agents + temp db (guarded)
+  unit/*.test.ts        # bun:test, stub agents, no network/smithers runtime
+  integration/*.test.ts # bun:test, real smithers via stub agents + temp db (incl. cross-process durability)
 ```
+
+There is no `Session`/`SessionStore`/`session.ts` and no `engine/` directory: durable
+run state is NOT persisted as a separate JSON blob — it is **derived from the smithers
+output tables** by `deriveStateFromOutputs`. The engine drives the run **programmatically**
+(`approveNode`/`denyNode`/`runWorkflow({resume:true})`), not by spawning the `smithers` CLI.
 
 ## smithers-orchestrator — public barrel cheat-sheet (verified, v0.24)
 
@@ -131,24 +135,28 @@ import { z } from "zod"; // zod v4 — schemas MUST be v4 (smithers reads schema
 - Run programmatically:
   ```ts
   const res = await Effect.runPromise(runWorkflow(wf, { input, runId, resume? }));
-  // res.status ∈ "finished"|"failed"|"cancelled"|"continued"|"waiting-approval"|"waiting-event"|"waiting-timer"
+  // res.status ∈ "running"|"finished"|"failed"|"cancelled"|"continued"|"waiting-approval"|"waiting-event"|"waiting-timer"
   // res.output is populated ONLY if a schema key is literally named `output`.
   ```
-- **Reading node outputs** (`loadOutputs` is NOT in the public barrel): read SQLite directly.
-  Table name = snake_case of the schema key; columns = the schema fields plus `run_id`, `iteration`.
+- **Reading node outputs** — `loadOutputs` **is** in the public barrel; prefer it for the
+  durable engine (it keys by schema key, so `outs["reviewVerdict"]` works even though the
+  table is `review_verdict`):
   ```ts
-  import { Database } from "bun:sqlite";
-  const db = new Database(dbPath, { readonly: true });
-  const rows = db.query(`SELECT * FROM ${table} WHERE run_id = ? ORDER BY iteration ASC`).all(runId);
+  import { loadOutputs } from "smithers-orchestrator";
+  const outs = await loadOutputs(api.db, api.tables, runId); // { <schemaKey>: Row[] }
   ```
-  Put this in `src/outputs.ts` as `readOutputs(dbPath, runId, table)` and JSON-parse object columns.
-- **Cross-process approve/resume** (no programmatic approveNode in the public barrel): drive the bundled
-  `smithers` CLI via `Bun.spawn` inside `CliEngine`:
-  - start:   `smithers up <pipeline.js> --run-id <id> --input <json>`  (runs to first gate, exits waiting-approval)
-  - resume:  `smithers up <pipeline.js> --resume <id>`
-  - approve: `smithers approve <id> [--node <nodeId>] [--note ...]`   /  `smithers deny <id>`
-  - status:  `smithers inspect <id> --format json`  /  `smithers ps --format json`
-  Resolve the `smithers` bin from the `smithers-orchestrator` dependency.
+  `src/outputs.ts` ALSO exposes a raw `bun:sqlite` reader (`readOutputs(dbPath, runId, table)`,
+  table = snake_case of the schema key, columns = schema fields + `run_id`/`node_id`/`iteration`);
+  `fusion.ts` uses it for the one-shot path. Either works — the barrel `loadOutputs` is simpler.
+- **Cross-process approve/resume** — done **programmatically** (these ARE in the barrel), not by
+  spawning the `smithers` CLI:
+  - approve / deny: `approveNode(adapter, runId, nodeId, iteration, note?)` / `denyNode(...)`,
+    where `adapter = new SmithersDb(workflow.db)` and `iteration` is the node's iteration (0 for
+    this pipeline's unrolled, non-looped gates).
+  - start:  `runWorkflow(workflow, { input, runId })`  (runs to the first gate)
+  - resume: `runWorkflow(workflow, { input: {}, runId, resume: true })`  (loads persisted input)
+  Rebuild the identical workflow in each process (`buildPipeline(dbPath, deps)`); the engine
+  derives the run's phase from the persisted outputs with `deriveStateFromOutputs`.
 
 ## incur — cheat-sheet (verified, v0.4.8)
 
