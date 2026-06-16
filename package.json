@@ -1,6 +1,6 @@
 {
   "name": "open-fusions",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "Run model fusions locally. Fan a prompt across a panel of models, judge their answers, and synthesize one. Ships a plan -> implement -> review -> fix coding loop where every step is a fusion. Installable as an agent skill or used as a CLI. Powered by smithers + incur.",
   "license": "MIT",
@@ -38,12 +38,12 @@
   },
   "files": [
     "dist",
-    "src",
     "SKILL.md",
     "README.md"
   ],
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "bun run build",
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:integration": "bun test test/integration",
