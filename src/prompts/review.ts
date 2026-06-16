@@ -1,15 +1,15 @@
 import type { Plan } from "../schemas";
 
-export function reviewPrompt(task: string, plan: Plan, diff: string): string {
+export function reviewPrompt(task: string, plan: Plan, context: string): string {
   return [
-    "Review the implementation diff against the task and plan.",
+    "Review the changes below against the task and plan.",
     `Task: ${task}`,
     "",
     "Plan:",
     JSON.stringify(plan, null, 2),
     "",
-    "Diff:",
-    diff,
+    "Changes under review (implementation summary + any prior fixes):",
+    context,
     "",
     "Return JSON with fields lgtm, summary, and issues.",
   ].join("\n");

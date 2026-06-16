@@ -83,24 +83,31 @@ describe("prompts", () => {
     expect(prompt).toContain("changes");
   });
 
-  test("reviewPrompt embeds task, plan, diff, and verdict field names", () => {
-    const prompt = reviewPrompt("Implement schemas", plan, "diff --git a/src/schemas.ts b/src/schemas.ts");
+  test("reviewPrompt embeds task, plan, the change context, and verdict field names", () => {
+    const prompt = reviewPrompt("Implement schemas", plan, "- src/schemas.ts: defined zod objects");
 
     expect(prompt).toContain("Implement schemas");
     expect(prompt).toContain("Add schemas");
-    expect(prompt).toContain("diff --git");
+    expect(prompt).toContain("- src/schemas.ts: defined zod objects");
     expect(prompt).toContain("lgtm");
     expect(prompt).toContain("issues");
+    // The change context is a prose summary, not a code diff — don't mislabel it.
+    expect(prompt).not.toContain("Diff:");
   });
 
-  test("fixPrompt embeds task, issues, and fix field names", () => {
+  test("fixPrompt embeds task, plan, the change context, issues, and fix field names", () => {
     const issues: ReviewVerdict["issues"] = [
       { severity: "high", file: "src/index.ts", description: "Missing exports" },
     ];
-    const prompt = fixPrompt("Implement schemas", issues);
+    const context = "- src/schemas.ts: defined zod objects";
+    const prompt = fixPrompt("Implement schemas", plan, context, issues);
 
     expect(prompt).toContain("Implement schemas");
     expect(prompt).toContain("Missing exports");
+    // The fix synthesizer must see the plan and what was implemented, not just
+    // the issue list, so its changes target the real implementation.
+    expect(prompt).toContain("Add schemas"); // plan detail
+    expect(prompt).toContain(context); // implementation/diff context
     expect(prompt).toContain("summary");
     expect(prompt).toContain("changes");
   });
