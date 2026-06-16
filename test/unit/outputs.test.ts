@@ -42,4 +42,32 @@ describe("outputs", () => {
     ]);
     expect(readLatest(dbPath, "run-1", "tiny_output")).toEqual(rows[1]);
   });
+
+  test("tableNameFor handles acronym boundaries", () => {
+    expect(tableNameFor("reviewVerdict")).toBe("review_verdict");
+    expect(tableNameFor("finalAnswer")).toBe("final_answer");
+    expect(tableNameFor("plan")).toBe("plan");
+  });
+
+  test("rejects an unsafe table name before touching the database (SQL-injection guard)", () => {
+    expect(() => readOutputs("/tmp/whatever.db", "run-1", "tiny; DROP TABLE x")).toThrow(/Unsafe SQLite table name/);
+    expect(() => readOutputs("/tmp/whatever.db", "run-1", "1bad")).toThrow(/Unsafe SQLite table name/);
+  });
+
+  test("throws on a missing table rather than returning garbage", () => {
+    const dbPath = join("/tmp", `open-fusions-outputs-missing-${Date.now()}-${Math.random()}.db`);
+    created.push(dbPath);
+    new Database(dbPath).close();
+    expect(() => readOutputs(dbPath, "run-1", "nope_table")).toThrow();
+  });
+
+  test("leaves malformed JSON-looking strings as raw text", () => {
+    const dbPath = join("/tmp", `open-fusions-outputs-bad-${Date.now()}-${Math.random()}.db`);
+    created.push(dbPath);
+    const db = new Database(dbPath);
+    db.exec("CREATE TABLE tiny_output (run_id TEXT, iteration INTEGER, payload TEXT)");
+    db.prepare("INSERT INTO tiny_output (run_id, iteration, payload) VALUES (?, ?, ?)").run("run-1", 1, "{not json");
+    db.close();
+    expect(readOutputs(dbPath, "run-1", "tiny_output")[0]?.payload).toBe("{not json");
+  });
 });
