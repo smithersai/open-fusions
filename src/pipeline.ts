@@ -9,7 +9,7 @@ import { planPrompt } from "./prompts/plan";
 import { reviewPrompt } from "./prompts/review";
 import { synthesizePrompt } from "./prompts/synthesize";
 import { safeCoerce } from "./coerce";
-import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS } from "./fusion";
+import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS, schemaFailFastAgent } from "./fusion";
 import { fix, implementation, judgment, panelResponse, plan, reviewVerdict } from "./schemas";
 import type { Fix, Implementation, Judgment, PanelResponse, Plan, ReviewVerdict } from "./schemas";
 import type { AgentLike } from "./types";
@@ -71,6 +71,19 @@ function changesToText(summary: string, changes: { file: string; description: st
 }
 
 /**
+ * The context a reviewer/fixer sees: the original implementation PLUS every fix
+ * applied so far. The review→fix loop must never collapse this to just the
+ * latest fix — otherwise iteration k>=1 grades a patch with no memory of what
+ * was implemented. Deterministic (pure function of persisted rows), so it
+ * rebuilds identically on every resume.
+ */
+export function composeReviewContext(implementation: Implementation, fixes: Fix[]): string {
+  const segments = [changesToText(implementation.summary, implementation.changes)];
+  fixes.forEach((f, i) => segments.push(`Fix ${i + 1}:\n${changesToText(f.summary, f.changes)}`));
+  return segments.join("\n\n");
+}
+
+/**
  * Build the durable pipeline as ONE smithers workflow. Each phase
  * (plan/implement/review/fix) is a fusion sub-tree (panel → judge → synthesize),
  * separated by `<Approval>` gates so the run pauses after every phase and the
@@ -111,7 +124,7 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
         const id = `${prefix}-p-${i}`;
         return h(
           Task,
-          { id, output: outputs.panelResponse, agent: deps.agentFor(modelId, "panelist"), retries, timeoutMs, continueOnFail: true, children: panelistPrompt(prompt, modelId) },
+          { id, output: outputs.panelResponse, agent: schemaFailFastAgent(deps.agentFor(modelId, "panelist")), retries, timeoutMs, continueOnFail: true, children: panelistPrompt(prompt, modelId) },
           id,
         );
       });
@@ -124,8 +137,8 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
       const judgeRow = safeCoerce(judgment, ctx.outputMaybe(outputs.judgment, { nodeId: `${prefix}-judge` })) ?? emptyJudgment;
       return [
         h(Parallel, { maxConcurrency: panel.length, children: panelEls }, `${prefix}-panel`),
-        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: deps.agentFor(judge, "judge"), retries, timeoutMs, continueOnFail: true, children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
-        h(Task, { id: `${prefix}-synth`, output: synthKey, agent: deps.agentFor(synthSpec, "synthesizer"), retries, timeoutMs, continueOnFail: true, children: synthesizePrompt(prompt, judgeRow, responses) }, `${prefix}-synth`),
+        h(Task, { id: `${prefix}-judge`, output: outputs.judgment, agent: schemaFailFastAgent(deps.agentFor(judge, "judge")), retries, timeoutMs, continueOnFail: true, children: judgePrompt(prompt, responses) }, `${prefix}-judge`),
+        h(Task, { id: `${prefix}-synth`, output: synthKey, agent: schemaFailFastAgent(deps.agentFor(synthSpec, "synthesizer")), retries, timeoutMs, continueOnFail: true, children: synthesizePrompt(prompt, judgeRow, responses) }, `${prefix}-synth`),
       ];
     };
     const gate = (nodeId: string, title: string, summary?: string): unknown =>
@@ -144,10 +157,13 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
       const implOut = synthRow<Implementation>(outputs.implementation, "impl");
       if (implOut) children.push(gate("impl-gate", "Approve the implementation?", implOut.summary));
 
-      // 3. REVIEW → FIX loop
+      // 3. REVIEW → FIX loop. `fixes` accumulates every applied fix so each
+      //    review/fix sees the implementation PLUS all prior fixes (never just
+      //    the latest one). Rebuilt deterministically from persisted rows.
       if (gateApproved("impl-gate") && implOut) {
-        let context = changesToText(implOut.summary, implOut.changes);
+        const fixes: Fix[] = [];
         for (let k = 0; k < MAX_REVIEW_ITERATIONS; k++) {
+          const context = composeReviewContext(implOut, fixes);
           children.push(...fusion(`review-${k}`, reviewPrompt(task, planOut, context), outputs.reviewVerdict));
           const rOut = synthRow<ReviewVerdict>(outputs.reviewVerdict, `review-${k}`);
           if (rOut) {
@@ -156,11 +172,11 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
           if (!rOut || !gateApproved(`review-${k}-gate`)) break;
           if (rOut.lgtm) break; // done
 
-          children.push(...fusion(`fix-${k}`, fixPrompt(task, rOut.issues), outputs.fix));
+          children.push(...fusion(`fix-${k}`, fixPrompt(task, planOut, context, rOut.issues), outputs.fix));
           const fOut = synthRow<Fix>(outputs.fix, `fix-${k}`);
           if (fOut) children.push(gate(`fix-${k}-gate`, "Approve the fix?", fOut.summary));
           if (!fOut || !gateApproved(`fix-${k}-gate`)) break;
-          context = changesToText(fOut.summary, fOut.changes);
+          fixes.push(fOut);
         }
       }
     }
