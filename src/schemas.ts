@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 const confidence = z.enum(["low", "medium", "high"]);
-const phase = z.enum(["plan", "implement", "review", "fix"]);
+/** Review-issue severity — distinct from `confidence`, and includes `critical`
+ *  so a reviewer can flag a blocking defect separately from a minor one. */
+const issueSeverity = z.enum(["low", "medium", "high", "critical"]);
 const change = z.object({
   file: z.string(),
   description: z.string(),
@@ -58,7 +60,7 @@ export const reviewVerdict = z.object({
   summary: z.string(),
   issues: z.array(
     z.object({
-      severity: confidence,
+      severity: issueSeverity,
       file: z.string().optional(),
       description: z.string(),
     }),
@@ -70,28 +72,9 @@ export const fix = z.object({
   changes: z.array(change),
 });
 
-export const sessionState = z.object({
-  id: z.string(),
-  task: z.string(),
-  phase,
-  iteration: z.number(),
-  plan: plan.optional(),
-  implementation: implementation.optional(),
-  lastReview: reviewVerdict.optional(),
-  history: z.array(
-    z.object({
-      phase,
-      at: z.string(),
-      summary: z.string(),
-    }),
-  ),
-});
-
 export type PanelResponse = z.infer<typeof panelResponse>;
 export type Judgment = z.infer<typeof judgment>;
-export type FinalAnswer = z.infer<typeof finalAnswer>;
 export type Plan = z.infer<typeof plan>;
 export type Implementation = z.infer<typeof implementation>;
 export type ReviewVerdict = z.infer<typeof reviewVerdict>;
 export type Fix = z.infer<typeof fix>;
-export type SessionState = z.infer<typeof sessionState>;

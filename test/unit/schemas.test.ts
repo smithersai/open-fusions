@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   type Judgment,
   type ReviewVerdict,
-  type SessionState,
   finalAnswer,
   fix,
   implementation,
@@ -10,7 +9,6 @@ import {
   panelResponse,
   plan,
   reviewVerdict,
-  sessionState,
 } from "../../src/schemas";
 
 describe("schemas", () => {
@@ -69,7 +67,7 @@ describe("schemas", () => {
     expect(() => implementation.parse({ ...valid, changes: [{ file: "src/schemas.ts" }] })).toThrow();
   });
 
-  test("reviewVerdict parses valid rows and rejects invalid severity", () => {
+  test("reviewVerdict supports a 'critical' issue severity and rejects unknown ones", () => {
     const valid: ReviewVerdict = {
       lgtm: false,
       summary: "One issue",
@@ -77,8 +75,14 @@ describe("schemas", () => {
     };
 
     expect(reviewVerdict.parse(valid)).toEqual(valid);
+    // A reviewer must be able to mark a blocking defect distinctly from a
+    // high-confidence-but-minor one — 'critical' is its own severity tier.
+    expect(
+      reviewVerdict.parse({ ...valid, issues: [{ severity: "critical", description: "Blocker" }] }),
+    ).toMatchObject({ issues: [{ severity: "critical" }] });
+    // But severity is still a closed set.
     expect(() =>
-      reviewVerdict.parse({ ...valid, issues: [{ severity: "critical", description: "Nope" }] }),
+      reviewVerdict.parse({ ...valid, issues: [{ severity: "blocker", description: "Nope" }] }),
     ).toThrow();
   });
 
@@ -90,32 +94,5 @@ describe("schemas", () => {
 
     expect(fix.parse(valid)).toEqual(valid);
     expect(() => fix.parse({ ...valid, changes: [{ description: "Re-exported modules" }] })).toThrow();
-  });
-
-  test("sessionState parses valid rows and rejects invalid phase", () => {
-    const valid: SessionState = {
-      id: "session-1",
-      task: "Add schemas",
-      phase: "plan",
-      iteration: 1,
-      plan: {
-        steps: [{ title: "Add schema", detail: "Create zod object" }],
-        risks: [],
-        files: ["src/schemas.ts"],
-      },
-      implementation: {
-        summary: "Added schemas",
-        changes: [{ file: "src/schemas.ts", description: "Defined zod objects" }],
-      },
-      lastReview: {
-        lgtm: true,
-        summary: "Looks good",
-        issues: [],
-      },
-      history: [{ phase: "plan", at: "2026-06-16T00:00:00.000Z", summary: "Planned" }],
-    };
-
-    expect(sessionState.parse(valid)).toEqual(valid);
-    expect(() => sessionState.parse({ ...valid, phase: "done" })).toThrow();
   });
 });
