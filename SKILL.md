@@ -72,11 +72,13 @@ open-fusions result --session <id>    # full plan + implementation + last review
   the panel catches what a single model misses.
 - **Follow the CTA.** Every response ends with the exact next command. Use it.
 - **Pick models when it matters.** For hard problems, widen the panel and use a strong
-  judge: `--panel "openai/gpt-5.5,anthropic/claude-opus-4.8,google/gemini-3-pro"
-  --judge "anthropic/claude-opus-4.8"`.
+  judge: `--panel "claude-code,codex,gemini" --judge "claude-code"` (smithers agent ids —
+  your subscription harnesses, or any model smithers supports).
 
 ## Requirements
 
 - Runs on [Bun](https://bun.sh).
-- Set `OPENROUTER_API_KEY` (default route for every model). Native provider keys
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are optional.
+- Fuses the coding-agent subscriptions you already have (Claude Code, Codex, Gemini, …)
+  through smithers agents — no special API key. Log in once with each harness's CLI
+  (`claude`, `codex`, `gemini`). If you put a direct API model on the panel, set that
+  provider's key.

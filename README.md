@@ -1,8 +1,8 @@
 # open-fusions
 
-> Run model **fusions** locally. Fan a prompt across a panel of models, let a judge
-> find the agreements and blind spots, and synthesize one answer. Then use the same
-> fusion at every step of a coding loop: **plan → implement → review → fix**, until LGTM.
+> **Run model fusions locally.** Fan a prompt across a panel of models, let a judge find
+> the agreements and blind spots, and synthesize one answer. Then use the same fusion at
+> every step of a coding loop — **plan → implement → review → fix** — until the panel says LGTM.
 
 Powered by [smithers](https://smithers.sh) (durable workflow runtime) and
 [incur](https://github.com/wevm/incur) (CLI framework for agents and humans).
@@ -11,206 +11,203 @@ Powered by [smithers](https://smithers.sh) (durable workflow runtime) and
 
 ## What is a fusion?
 
-A single model is one opinion. A **fusion** is many.
+A single model is one opinion. A **fusion** is many, reconciled:
 
-1. **Panel** — your prompt is sent to several different models in parallel.
+1. **Panel** — your prompt goes to several different models in parallel.
 2. **Judge** — a judge model reads every response and maps the consensus,
    contradictions, unique insights, and blind spots.
 3. **Synthesize** — a synthesizer writes one final answer grounded in that analysis.
 
-This is the approach OpenRouter reported beating a single frontier model on deep
-research, and matching it at roughly half the cost with a budget panel. `open-fusions`
-runs it on your machine, against any models you can reach (OpenRouter by default, so a
-single key reaches the whole catalog).
+One model can be confidently wrong. A panel that disagrees surfaces the risk; the judge and
+synthesizer turn that disagreement into a better answer than any single model gave.
+
+## Fuse the agents you already have
+
+open-fusions is **not** a hosted router and needs **no special API key**. By default it
+fuses the coding-agent **subscriptions you already run** — Claude Code, Codex, Gemini, and
+friends — through [smithers](https://smithers.sh) agents, riding the logins you already
+have. Point `--panel` / `--judge` at any smithers agent id to mix and match, including
+direct API models when you want them.
+
+```sh
+open-fusions fuse "What's the safest way to add idempotency keys to this endpoint?" \
+  --panel "claude-code,codex,gemini" --judge "claude-code"
+```
 
 ## Every step is a fusion
 
-`open-fusions` ships a coding loop where **each phase is a fusion** and **each phase is
-a separate command** the driving agent calls one at a time:
+open-fusions ships a coding loop where **each phase is a fusion** and **each phase is a
+separate command** the driving agent calls one at a time:
 
 ```
 plan ──▶◇   implement ──▶◇   review ──▶◇
                                   │
                         lgtm? ─no─▶ fix ──▶◇ ──▶ (back to review)
                         yes──▶ done
-◇ = a gate the agent clears by calling the next command.
+◇ = an approval gate the agent clears by calling the next command.
 ```
 
-Plan with a fusion. Implement with a fusion. Review with a fusion, which triggers fixes,
-re-reviewed by a fusion, until the panel says LGTM. No single model is trusted to grade
-its own homework.
+Plan with a fusion. Implement with a fusion. Review with a fusion, which triggers fixes —
+re-reviewed by a fusion — until the panel agrees. No single model grades its own homework.
+
+Under the hood this is **one durable smithers run** with `<Approval>` gates between phases.
+Each command resumes the run, advances it past exactly one gate, and pauses — so a crash,
+restart, or a day-later resume picks up exactly where it left off.
 
 ## Install
 
-`open-fusions` runs on [Bun](https://bun.sh) (the durable engine uses `bun:sqlite`).
+open-fusions runs on [Bun](https://bun.sh) (the durable engine uses `bun:sqlite`).
 
 ```sh
 bun add open-fusions
 ```
 
-Set at least one model key. OpenRouter is the default route (one key, every model):
+Authenticate the harnesses you want on the panel — the ones you already use:
 
 ```sh
-export OPENROUTER_API_KEY=sk-or-...
-# optional native providers, used only when a model targets them explicitly:
-export ANTHROPIC_API_KEY=...
-export OPENAI_API_KEY=...
+claude   # log in to your Claude subscription (Claude Code)
+codex    # log in to your OpenAI/Codex subscription
+gemini   # log in to your Google/Gemini subscription
 ```
+
+No per-call API key is required for subscription harnesses. If you put a direct API model
+on the panel instead, set that provider's key (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
 
 ---
 
 ## For humans: install the skill, then ask your agent
 
-You don't run fusions by hand. You install the skill into your coding agent
-(Claude Code, Cursor, Amp, …) once, then ask — in plain English — for what you want.
-The agent discovers each fusion phase as a tool and drives the
-plan → implement → review → fix loop for you.
+You don't run fusions by hand. Install the skill into your coding agent (Claude Code,
+Cursor, Amp, …) once, then ask — in plain English — for what you want. The agent discovers
+each fusion phase as a tool and drives the plan → implement → review → fix loop for you.
 
 ```sh
 open-fusions skills add     # install the skill into your agent harness
 open-fusions mcp add        # …or register as an MCP server instead
 ```
 
-Then just prompt your agent in natural language:
+Then just prompt your agent:
 
 > "Use open-fusions to plan and implement rate limiting and audit logging, and keep
-> reviewing until the panel says LGTM."
+> reviewing with a fusion until the panel says LGTM."
 
 > "Ask a fusion for the safest way to add idempotency keys to this endpoint."
 
-> "Review my current diff with a fusion and fix whatever it flags, then re-review."
-
-The agent runs the commands, applies the edits, and loops review → fix on your behalf —
-you stay in control by approving the changes it makes along the way. You never touch the
-CLI directly.
-
-If you'd rather drive the commands yourself, the full reference is in
-[For agents](#for-agents-the-command-reference) below.
+The agent runs the commands, applies the edits, and loops review → fix on your behalf. You
+stay in control by approving the changes it makes. You never touch the CLI directly.
 
 ---
 
 ## For agents: the command reference
 
-> This section is for the **agent** driving open-fusions (it's the same material the
-> installed skill exposes). Each command runs one fusion for one phase. Run **one command
-> per step** — every response ends with a **Next:** call-to-action naming the exact command
-> to run next. Follow it.
+> The agent driving open-fusions runs **one command per step**. Every response ends with a
+> **Next:** call-to-action naming the exact command to run next — follow it. State lives in
+> a durable run keyed by `--session`; `plan` creates it and returns the id.
 
-### One-shot fusion (a single question)
-
-```sh
-open-fusions fuse "What's the best caching strategy for a read-heavy JSON API?"
-```
-
-You get back the synthesized answer, plus the judge's breakdown (consensus,
-contradictions, blind spots) and every panelist's raw take. Add `--json` for structured
-output, or `--panel` / `--judge` to choose models:
+### One-shot fusion
 
 ```sh
-open-fusions fuse "Design a rate limiter" \
-  --panel "openai/gpt-5.5,anthropic/claude-opus-4.8,google/gemini-3-pro" \
-  --judge "anthropic/claude-opus-4.8" --json
+open-fusions fuse "Compare optimistic vs pessimistic locking for this workload"
+# → synthesized answer + the judge's consensus/contradictions/blind-spots + each panelist
 ```
+
+Add `--json` for structured output; `--panel "a,b,c"` / `--judge "id"` to choose agents.
 
 ### The coding loop
 
-Each command runs a fusion for one phase and persists a **session** so the next command
-picks up where the last left off. `implement` and `fix` return synthesized guidance, not
-file writes — the agent applies the actual edits, then calls the next command.
-
 ```sh
-# 1. PLAN — a fusion drafts the plan, returns a session id
+# 1. PLAN — a fusion drafts the plan and opens a durable run
 open-fusions plan "add rate limiting and audit logging"
-# → { session: "s-...", phase: "implement", plan: { steps, risks, files } }
+# → { session: "of-…", phase: "plan", plan: { steps, risks, files }, cta: { … } }
 
-# 2. IMPLEMENT — a fusion synthesizes implementation guidance (apply the edits yourself)
-open-fusions implement --session s-...
+# 2. IMPLEMENT — approve the plan; a fusion synthesizes the implementation (you apply it)
+open-fusions implement --session of-…
 
-# 3. REVIEW — a fusion reviews the working diff (auto-detected via `git diff`)
-open-fusions review --session s-...
-# → lgtm: false, issues: [...]   (CTA points you to `fix`)
+# 3. REVIEW — a fusion reviews the work and returns a verdict
+open-fusions review --session of-…
+# → lgtm: false → CTA: fix     |     lgtm: true → done
 
-# 4. FIX — a fusion synthesizes fixes for the issues (apply them, then re-review)
-open-fusions fix --session s-...
+# 4. FIX — a fusion synthesizes fixes for the issues (you apply them)
+open-fusions fix --session of-…
 
 # 5. REVIEW again — loop until the panel agrees
-open-fusions review --session s-...
-# → lgtm: true   ✅ done
+open-fusions review --session of-…
+# → lgtm: true ✅
 ```
 
-### Inspect or resume
+### Inspect, resume, or abandon
 
 ```sh
-open-fusions status --session s-...   # phase, iteration, lgtm
-open-fusions result --session s-...   # full plan + implementation + last review
+open-fusions status --session of-…   # phase, iteration, lgtm, pending gate
+open-fusions result --session of-…   # the current phase's synthesized output
+open-fusions reject --session of-…   # deny the pending gate and stop the run
 ```
+
+Because the run is durable, any command runs in a fresh process and resumes the same run by
+`--session`.
 
 ### Operating rules
 
-- **One command per step.** Plan, then stop. Implement, then stop. The session carries
-  state between calls.
-- **You make the edits.** `implement` and `fix` return guidance, not file writes. Apply
-  the changes to the repo, then call the next command.
-- **Trust the panel, not one model.** Don't skip `review`. Loop fix → review until LGTM.
-- **Follow the CTA.** Every response ends with the exact next command. Use it.
-- **Pick models when it matters.** For hard problems, widen the panel and use a strong
-  judge via `--panel` / `--judge`.
+- **One command per step.** Plan, then stop. Implement, then stop. The run carries state.
+- **You make the edits.** `implement` and `fix` return synthesized guidance, not file
+  writes — apply the changes, then call the next command.
+- **Don't skip `review`.** Loop fix → review until LGTM; the panel catches what one model misses.
+- **Follow the CTA.** Every response names the exact next command.
+- **Widen the panel for hard problems** with `--panel` / `--judge`.
 
 ## Configuration
 
 | Flag / env | Purpose |
 | --- | --- |
-| `--panel "a,b,c"` | Comma-separated model ids for the panel |
-| `--judge "id"` | Model that judges and synthesizes |
-| `--session "id"` | Target an existing session |
-| `--diff "..."` | Provide the diff for `review` (defaults to `git diff`) |
-| `OPENROUTER_API_KEY` | Default routing for every model |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Native providers (opt-in) |
-| `OPEN_FUSIONS_DIR` | Where sessions are stored (default `.open-fusions/`) |
+| `--panel "a,b,c"` | Comma-separated smithers agent ids for the panel |
+| `--judge "id"` | Agent that judges + synthesizes |
+| `--session "id"` | Target an existing durable run (pin an id on `plan`) |
+| `OPEN_FUSIONS_DIR` | Where durable runs are stored (default `.open-fusions/`) |
 
-Model ids are [OpenRouter](https://openrouter.ai) `vendor/model` strings by default
-(e.g. `anthropic/claude-opus-4.8`). To hit a provider's native API directly, pass an
-object spec with an explicit `provider` in the programmatic API. Run `open-fusions --llms`
-for the machine-readable command manifest.
+Panel/judge values are **smithers agent ids** — subscription harnesses (`claude-code`,
+`codex`, `gemini`, …) or any model smithers supports. They're persisted in the run on
+`plan`, so every resume rebuilds the identical pipeline.
 
 ## Programmatic API
 
 ```ts
-import { runFusion, fuse, fuseWith, SessionStore, runPlan } from "open-fusions";
+import { runFusion, OpenFusionsEngine } from "open-fusions";
 
-// one-shot fusion
+// one-shot fusion: fan a prompt across a panel, judge, synthesize
 const r = await runFusion({
-  prompt: "What's the best caching strategy for a read-heavy API?",
-  panel: ["openai/gpt-5.5", "anthropic/claude-opus-4.8", "google/gemini-3-pro"],
-  judge: "anthropic/claude-opus-4.8",
+  prompt: "What's the safest way to add idempotency keys to this endpoint?",
+  panel: ["claude-code", "codex", "gemini"],
+  judge: "claude-code",
 });
-console.log(r.answer);     // synthesized answer
-console.log(r.judgment);   // consensus / contradictions / blindSpots
-console.log(r.panel);      // each model's raw response
+console.log(r.answer); // synthesized answer
+console.log(r.judgment); // consensus / contradictions / blind spots
+console.log(r.panel); // each model's raw response
 
-// fusion with a custom structured output schema
-import { z } from "zod";
-const out = await fuseWith({ /* ... */, schema: z.object({ steps: z.array(z.string()) }) });
+// the durable coding loop, advanced one phase at a time
+const engine = new OpenFusionsEngine();
+const planned = await engine.start("add rate limiting", { panel: ["claude-code", "codex"], judge: "gemini" });
+const implemented = await engine.advance(planned.runId); // approve the plan gate → implement
+const reviewed = await engine.advance(implemented.runId); // → review verdict (reviewed.lgtm)
 ```
 
 ## How it works
 
-- Each fusion is a [smithers](https://smithers.sh) workflow: a `Parallel` fan-out of
-  panelist tasks → a judge task → a synthesizer task, with every output validated by a
-  Zod schema and persisted to SQLite.
-- Models are reached through smithers agents over the Vercel AI SDK, defaulting to
-  OpenRouter's OpenAI-compatible endpoint so one key covers the whole catalog.
-- The coding loop persists `SessionState` as JSON between commands, so the agent
-  advances the pipeline one tool call at a time.
-- The CLI and skill packaging come from [incur](https://github.com/wevm/incur):
+- **Each phase is a fusion:** a smithers `Parallel` fan-out of panelist tasks → a judge
+  task → a synthesizer task, with every output validated by a Zod schema.
+- **The loop is one durable smithers run** with `<Approval>` gates between phases. Each
+  command resumes the run, advances it past one gate (running that phase's fusion), and
+  pauses. The panel/judge are persisted in the run, so every resume rebuilds the identical
+  workflow and a crash resumes exactly where it left off.
+- **Models are smithers agents** — your subscription coding harnesses or any model smithers
+  supports — selected with `--panel` / `--judge`. No hosted router, no special key.
+- **The CLI and skill packaging come from [incur](https://github.com/wevm/incur):**
   token-efficient output, on-demand skill loading, and built-in MCP.
 
-## Status
+## Durable by design
 
-`open-fusions` is early. The session-driven loop above is the stable path today. A fully
-durable single-run mode (one smithers run gated by `Approval` nodes, resumed across
-processes) is on the roadmap and lands once the programmatic approval API ships in the
-published `smithers-orchestrator`.
+The plan → implement → review → fix loop is **one durable smithers run**: each phase is a
+fusion, `<Approval>` gates sit between phases, and the run is resumable across processes by
+session id — so a crash, restart, or a day-later resume picks up exactly where it left off.
 
 ## License
 
