@@ -41,8 +41,8 @@ call-to-action with the exact command to run next — follow it.
    open-fusions implement --session <id>
    ```
 
-3. **Review.** A fusion reviews your working diff (auto-detected via `git diff`, or pass
-   `--diff`). It returns `lgtm` plus a list of issues.
+3. **Review.** A fusion reviews the implementation the previous step synthesized
+   (against the plan) and returns `lgtm` plus a list of issues.
    ```sh
    open-fusions review --session <id>
    ```
