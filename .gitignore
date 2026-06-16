@@ -1,0 +1,18 @@
+node_modules
+dist
+coverage
+
+# smithers durable run databases
+*.db
+*.db-shm
+*.db-wal
+.smithers
+.open-fusions
+
+# misc
+.scratch
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example

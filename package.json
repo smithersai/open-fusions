@@ -1,0 +1,72 @@
+{
+  "name": "open-fusions",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Run model fusions locally. Fan a prompt across a panel of models, judge their answers, and synthesize one. Ships a plan -> implement -> review -> fix coding loop where every step is a fusion. Installable as an agent skill or used as a CLI. Powered by smithers + incur.",
+  "license": "MIT",
+  "author": "wevm",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wevm/open-fusions"
+  },
+  "keywords": [
+    "fusion",
+    "llm",
+    "ensemble",
+    "panel",
+    "agent",
+    "skill",
+    "cli",
+    "incur",
+    "smithers",
+    "openrouter"
+  ],
+  "bin": {
+    "open-fusions": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "SKILL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "bun test",
+    "test:unit": "bun test test/unit",
+    "test:integration": "bun test test/integration",
+    "typecheck": "tsc --noEmit",
+    "dev": "bun run src/bin.ts"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "effect": "^3.21.1",
+    "incur": "^0.4.8",
+    "smithers-orchestrator": "^0.23.0",
+    "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@ai-sdk/anthropic": "^3",
+    "@ai-sdk/google": "^3",
+    "@ai-sdk/openai": "^3",
+    "@openrouter/ai-sdk-provider": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "@types/node": "^22",
+    "tsup": "^8",
+    "typescript": "^5"
+  }
+}
