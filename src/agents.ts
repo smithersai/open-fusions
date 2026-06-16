@@ -14,6 +14,7 @@ import {
   type Account,
   type AccountProvider,
 } from "@smithers-orchestrator/accounts";
+import { NoModelsError } from "./errors";
 import type {
   AgentLike,
   FusionConfig,
@@ -105,7 +106,9 @@ export function resolveModelSpec(spec: ModelSpec): NormalizedModelSpec {
  */
 export function resolveAgent(spec: ModelSpec, env: NodeJS.ProcessEnv = process.env): AgentLike {
   if (isAgentLike(spec)) return spec;
-  return agentFromNormalized(resolveModelSpec(spec), env);
+  // Coalesce here too: callers may pass an explicit `undefined` (e.g. a
+  // FusionConfig with no `env`), which would otherwise defeat the default.
+  return agentFromNormalized(resolveModelSpec(spec), env ?? process.env);
 }
 
 /** Construct a subscription/API agent from a registered smithers account. */
@@ -133,7 +136,7 @@ export function buildPanel(config: FusionConfig): PanelMember[] {
 
 /** Default panel = your registered subscription accounts (then API accounts). */
 export function defaultPanel(env: NodeJS.ProcessEnv = process.env): string[] {
-  const accounts = listAccounts(env);
+  const accounts = listAccounts(env ?? process.env);
   const subs = accounts.filter((a) => SUBSCRIPTION_PROVIDERS.has(a.provider));
   const pool = subs.length > 0 ? subs : accounts;
   if (pool.length === 0) throw noModelsError();
@@ -142,7 +145,7 @@ export function defaultPanel(env: NodeJS.ProcessEnv = process.env): string[] {
 
 /** Default judge = the strongest registered account (prefers claude-code). */
 export function defaultJudge(env: NodeJS.ProcessEnv = process.env): string {
-  const accounts = listAccounts(env);
+  const accounts = listAccounts(env ?? process.env);
   if (accounts.length === 0) throw noModelsError();
   const order: AccountProvider[] = [
     "claude-code",
@@ -274,6 +277,6 @@ function needModelError(provider: string): Error {
   return new Error(`"${provider}" needs a model, e.g. ${provider}:<model>.`);
 }
 
-function noModelsError(): Error {
-  return new Error(`No models available. ${REGISTER_HINT}`);
+function noModelsError(): NoModelsError {
+  return new NoModelsError(`No models available. ${REGISTER_HINT}`);
 }

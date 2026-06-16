@@ -149,4 +149,61 @@ describe("buildPanel", () => {
     expect(panel.map((m) => m.id)).toEqual(["codex-1", "codex-1#2", "gemini-1"]);
     expect(panel.every((m) => typeof m.agent.generate === "function")).toBe(true);
   });
+
+  test("threads an AgentLike spec straight through as a panel member", () => {
+    const panel = buildPanel({ panel: [stub], env });
+    expect(panel[0]!.agent).toBe(stub);
+  });
+});
+
+describe("resolveAgent error branches", () => {
+  test("openrouter/compat without a model are rejected with a helpful message", () => {
+    expect(() => resolveAgent("openrouter", env)).toThrow(/needs a model/);
+    expect(() => resolveAgent("compat", env)).toThrow(/needs a model/);
+  });
+
+  test("compat without a base URL is rejected", () => {
+    expect(() => resolveAgent("compat:llama3", env)).toThrow(/base URL|OPENAI_BASE_URL/);
+  });
+
+  test("native openai/anthropic specs resolve to agents", () => {
+    expect(typeof resolveAgent("openai:gpt-5.5", { ...env, OPENAI_API_KEY: "k" }).generate).toBe("function");
+    expect(typeof resolveAgent("anthropic:claude-opus-4-8", env).generate).toBe("function");
+  });
+
+  test("an explicit object spec with provider + baseURL resolves", () => {
+    const agent = resolveAgent({ provider: "openai-compatible", model: "llama3", baseURL: "http://localhost:11434/v1", apiKey: "x" });
+    expect(typeof agent.generate).toBe("function");
+  });
+});
+
+describe("createAgentFromAccount", () => {
+  test("rejects an unsupported provider", () => {
+    // @ts-expect-error — deliberately invalid provider to exercise the guard.
+    expect(() => createAgentFromAccount({ label: "x", provider: "made-up" })).toThrow(/Unsupported account provider/);
+  });
+
+  test("builds an api-key (anthropic-api) account agent", () => {
+    const agent = createAgentFromAccount({ label: "a", provider: "anthropic-api", apiKey: "sk-test", model: "claude-opus-4-8" });
+    expect(typeof agent.generate).toBe("function");
+  });
+});
+
+describe("defaultJudge fallback chain", () => {
+  test("falls back to the first available provider when no claude-code account exists", () => {
+    // Fixture has codex/gemini/claude — claude-code wins (covered above). Here,
+    // with only a kimi account, defaultJudge falls all the way through to it.
+    const home = mkdtempSync(join(tmpdir(), "of-kimi-"));
+    const kimiEnv = { SMITHERS_HOME: home };
+    writeFileSync(
+      accountsFilePath(kimiEnv),
+      JSON.stringify({ version: 1, accounts: [{ label: "kimi-only", provider: "kimi", configDir: join(home, ".k") }] }),
+    );
+    try {
+      expect(defaultJudge(kimiEnv)).toBe("kimi-only");
+      expect(defaultPanel(kimiEnv)).toEqual(["kimi-only"]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
