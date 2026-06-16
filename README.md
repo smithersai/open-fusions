@@ -57,7 +57,46 @@ export ANTHROPIC_API_KEY=...
 export OPENAI_API_KEY=...
 ```
 
-## Quickstart: a one-shot fusion
+---
+
+## For humans: install the skill, then ask your agent
+
+You don't run fusions by hand. You install the skill into your coding agent
+(Claude Code, Cursor, Amp, …) once, then ask — in plain English — for what you want.
+The agent discovers each fusion phase as a tool and drives the
+plan → implement → review → fix loop for you.
+
+```sh
+open-fusions skills add     # install the skill into your agent harness
+open-fusions mcp add        # …or register as an MCP server instead
+```
+
+Then just prompt your agent in natural language:
+
+> "Use open-fusions to plan and implement rate limiting and audit logging, and keep
+> reviewing until the panel says LGTM."
+
+> "Ask a fusion for the safest way to add idempotency keys to this endpoint."
+
+> "Review my current diff with a fusion and fix whatever it flags, then re-review."
+
+The agent runs the commands, applies the edits, and loops review → fix on your behalf —
+you stay in control by approving the changes it makes along the way. You never touch the
+CLI directly.
+
+If you'd rather drive the commands yourself, the full reference is in
+[For agents](#for-agents-the-command-reference) below.
+
+---
+
+## For agents: the command reference
+
+> This section is for the **agent** driving open-fusions (it's the same material the
+> installed skill exposes). Each command runs one fusion for one phase. Run **one command
+> per step** — every response ends with a **Next:** call-to-action naming the exact command
+> to run next. Follow it.
+
+### One-shot fusion (a single question)
 
 ```sh
 open-fusions fuse "What's the best caching strategy for a read-heavy JSON API?"
@@ -73,24 +112,25 @@ open-fusions fuse "Design a rate limiter" \
   --judge "anthropic/claude-opus-4.8" --json
 ```
 
-## The coding loop
+### The coding loop
 
 Each command runs a fusion for one phase and persists a **session** so the next command
-picks up where the last left off. The agent (or you) calls them one at a time.
+picks up where the last left off. `implement` and `fix` return synthesized guidance, not
+file writes — the agent applies the actual edits, then calls the next command.
 
 ```sh
 # 1. PLAN — a fusion drafts the plan, returns a session id
 open-fusions plan "add rate limiting and audit logging"
 # → { session: "s-...", phase: "implement", plan: { steps, risks, files } }
 
-# 2. IMPLEMENT — a fusion synthesizes implementation guidance
+# 2. IMPLEMENT — a fusion synthesizes implementation guidance (apply the edits yourself)
 open-fusions implement --session s-...
 
 # 3. REVIEW — a fusion reviews the working diff (auto-detected via `git diff`)
 open-fusions review --session s-...
 # → lgtm: false, issues: [...]   (CTA points you to `fix`)
 
-# 4. FIX — a fusion synthesizes fixes for the issues
+# 4. FIX — a fusion synthesizes fixes for the issues (apply them, then re-review)
 open-fusions fix --session s-...
 
 # 5. REVIEW again — loop until the panel agrees
@@ -98,29 +138,23 @@ open-fusions review --session s-...
 # → lgtm: true   ✅ done
 ```
 
-Inspect or resume any time:
+### Inspect or resume
 
 ```sh
 open-fusions status --session s-...   # phase, iteration, lgtm
 open-fusions result --session s-...   # full plan + implementation + last review
 ```
 
-Every command prints a **call-to-action** naming the exact next command, so an agent
-can drive the whole loop without memorizing the flow.
+### Operating rules
 
-## Use it as an agent skill
-
-`open-fusions` is built with [incur](https://github.com/wevm/incur), so it installs into
-any harness as a skill and exposes itself over MCP:
-
-```sh
-open-fusions skills add     # install the skill into Claude Code, Cursor, Amp, ...
-open-fusions mcp add        # or register as an MCP server
-open-fusions --llms         # machine-readable command manifest
-```
-
-Once installed, the agent discovers each phase as a tool and runs the plan → implement →
-review → fix loop on your behalf, one fusion per step.
+- **One command per step.** Plan, then stop. Implement, then stop. The session carries
+  state between calls.
+- **You make the edits.** `implement` and `fix` return guidance, not file writes. Apply
+  the changes to the repo, then call the next command.
+- **Trust the panel, not one model.** Don't skip `review`. Loop fix → review until LGTM.
+- **Follow the CTA.** Every response ends with the exact next command. Use it.
+- **Pick models when it matters.** For hard problems, widen the panel and use a strong
+  judge via `--panel` / `--judge`.
 
 ## Configuration
 
@@ -136,7 +170,8 @@ review → fix loop on your behalf, one fusion per step.
 
 Model ids are [OpenRouter](https://openrouter.ai) `vendor/model` strings by default
 (e.g. `anthropic/claude-opus-4.8`). To hit a provider's native API directly, pass an
-object spec with an explicit `provider` in the programmatic API.
+object spec with an explicit `provider` in the programmatic API. Run `open-fusions --llms`
+for the machine-readable command manifest.
 
 ## Programmatic API
 
