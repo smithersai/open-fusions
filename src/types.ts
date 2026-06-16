@@ -1,7 +1,5 @@
 import type { Judgment, PanelResponse } from "./schemas";
 
-export type Phase = "plan" | "implement" | "review" | "fix";
-
 /**
  * Where a model comes from. open-fusions runs on your own smithers agents:
  * - Subscription harnesses (no API key) — the local CLIs you're logged into,
@@ -45,6 +43,11 @@ export type ModelSpecObject = {
   apiKey?: string;
   /** Per-account CLI config dir for subscription providers. */
   configDir?: string;
+  /**
+   * System instructions. Only honored for the native SDK providers
+   * (`anthropic`/`openai`/`openrouter`/`openai-compatible`); subscription
+   * harnesses and registered accounts run their own CLI and ignore it.
+   */
   instructions?: string;
 };
 
@@ -62,7 +65,9 @@ export type NormalizedModelSpec = {
 };
 
 export type AgentLike = {
-  generate(args?: unknown): Promise<{ output: unknown }>;
+  generate(args?: unknown): Promise<unknown>;
+  id?: string;
+  model?: string;
 };
 
 export type PanelMember = {

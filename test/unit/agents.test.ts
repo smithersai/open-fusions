@@ -12,6 +12,7 @@ import {
   resolveAgent,
   resolveModelSpec,
 } from "../../src/agents";
+import type { AgentLike } from "../../src/types";
 
 // A throwaway home with three registered subscription accounts (no API keys).
 // Honored by the smithers accounts API via SMITHERS_HOME, so the registry-driven
@@ -52,6 +53,18 @@ describe("isAgentLike", () => {
 });
 
 describe("resolveModelSpec", () => {
+  test("accepts the honest smithers AgentLike shape", () => {
+    const agent: AgentLike = {
+      id: "agent-id",
+      model: "model-id",
+      async generate() {
+        return "raw smithers output";
+      },
+    };
+
+    expect(resolveModelSpec(agent)).toEqual({ id: "agent-id" });
+  });
+
   test("parses bare provider keywords", () => {
     expect(resolveModelSpec("claude-code")).toMatchObject({ id: "claude-code", provider: "claude-code" });
     expect(resolveModelSpec("codex")).toMatchObject({ provider: "codex" });
@@ -169,6 +182,14 @@ describe("resolveAgent error branches", () => {
   test("native openai/anthropic specs resolve to agents", () => {
     expect(typeof resolveAgent("openai:gpt-5.5", { ...env, OPENAI_API_KEY: "k" }).generate).toBe("function");
     expect(typeof resolveAgent("anthropic:claude-opus-4-8", env).generate).toBe("function");
+  });
+
+  test("bare native provider without a model is rejected (no garbage model id)", () => {
+    // "anthropic"/"openai" alone has no model; we must NOT silently build an
+    // agent whose model is the literal string "anthropic"/"openai" (which only
+    // 400s later at generate time). Mirror openrouter/compat's eager rejection.
+    expect(() => resolveAgent("anthropic", env)).toThrow(/needs a model/);
+    expect(() => resolveAgent("openai", { ...env, OPENAI_API_KEY: "k" })).toThrow(/needs a model/);
   });
 
   test("an explicit object spec with provider + baseURL resolves", () => {

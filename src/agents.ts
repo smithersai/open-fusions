@@ -38,11 +38,11 @@ type AgentCtor = new (opts: Record<string, unknown>) => AgentLike;
 // Subscription harnesses: a model spec that names one of these (by provider or
 // by a registered account) spawns the local CLI you're already logged into.
 const SUBSCRIPTION_CLASSES: Record<string, AgentCtor> = {
-  "claude-code": ClaudeCodeAgent as unknown as AgentCtor,
-  codex: CodexAgent as unknown as AgentCtor,
-  gemini: GeminiAgent as unknown as AgentCtor,
-  kimi: KimiAgent as unknown as AgentCtor,
-  antigravity: AntigravityAgent as unknown as AgentCtor,
+  "claude-code": ClaudeCodeAgent,
+  codex: CodexAgent,
+  gemini: GeminiAgent,
+  kimi: KimiAgent,
+  antigravity: AntigravityAgent,
 };
 
 // Every smithers account provider → the agent class that runs it. API-keyed
@@ -188,17 +188,22 @@ function agentFromNormalized(n: NormalizedModelSpec, env: NodeJS.ProcessEnv): Ag
     return new SubCtor(o);
   }
 
-  // 3. Native provider SDKs (billed against an API key).
+  // 3. Native provider SDKs (billed against an API key). Require an explicit
+  //    model the same way openrouter/compat do — a bare "anthropic"/"openai"
+  //    must NOT fall back to n.id (the literal provider token), which would
+  //    construct an agent with an invalid model id that only 400s at run time.
   if (provider === "anthropic") {
-    return new AnthropicAgent({ model: nativeModelId(n.model ?? n.id), instructions: n.instructions }) as unknown as AgentLike;
+    if (!n.model) throw needModelError("anthropic");
+    return new AnthropicAgent({ model: nativeModelId(n.model), instructions: n.instructions });
   }
   if (provider === "openai") {
+    if (!n.model) throw needModelError("openai");
     return new OpenAIAgent({
-      model: nativeModelId(n.model ?? n.id),
+      model: nativeModelId(n.model),
       apiKey: n.apiKey ?? env.OPENAI_API_KEY,
       instructions: n.instructions,
       nativeStructuredOutput: false,
-    }) as unknown as AgentLike;
+    });
   }
 
   // 4. OpenRouter (opt-in) — its OpenAI-compatible endpoint, one key for the catalog.
@@ -210,7 +215,7 @@ function agentFromNormalized(n: NormalizedModelSpec, env: NodeJS.ProcessEnv): Ag
       apiKey: n.apiKey ?? env.OPENROUTER_API_KEY,
       instructions: n.instructions,
       nativeStructuredOutput: false,
-    }) as unknown as AgentLike;
+    });
   }
 
   // 5. Any OpenAI-compatible endpoint (Ollama, vLLM, a self-hosted gateway).
@@ -228,7 +233,7 @@ function agentFromNormalized(n: NormalizedModelSpec, env: NodeJS.ProcessEnv): Ag
       apiKey: n.apiKey ?? env.OPENAI_API_KEY ?? "none",
       instructions: n.instructions,
       nativeStructuredOutput: false,
-    }) as unknown as AgentLike;
+    });
   }
 
   throw unknownIdError(n.id);
@@ -257,9 +262,8 @@ function objectId(spec: ModelSpecObject): string {
 }
 
 function agentId(agent: AgentLike): string {
-  const a = agent as { id?: unknown; model?: unknown };
-  if (typeof a.id === "string") return a.id;
-  if (typeof a.model === "string") return a.model;
+  if (typeof agent.id === "string") return agent.id;
+  if (typeof agent.model === "string") return agent.model;
   return "agent";
 }
 
