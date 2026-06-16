@@ -90,6 +90,55 @@ describe("coerceToSchema", () => {
     // Deterministic: the top-level object is itself valid, so it is returned as-is.
     expect(coerceToSchema(permissive, value)).toEqual({ a: "{}", b: "{}" });
   });
+
+  // [11] A whole-value JSON string that parses to an object which does NOT validate
+  // directly (its `answer` field is an object, not a string). Step 1 parses it but
+  // the direct parse of step 1 fails, so the parsed object becomes the candidate
+  // and step 5 re-stringifies the object-valued string field to recover. (lines 43-44)
+  test("parses a JSON string whose object needs step-5 re-stringification to validate", () => {
+    const value = JSON.stringify({ answer: { port: 8080 }, caveats: [] });
+    expect(coerceToSchema(fa, value)).toEqual({
+      answer: JSON.stringify({ port: 8080 }),
+      caveats: [],
+    });
+  });
+
+  // [12] The step-2 "siblings empty" check must treat "" , null, and {} as empty so
+  // a genuine single-field unwrap still proceeds when siblings are degenerate.
+  // (isEmptyish lines 136-137 and the "" / null branches of 134)
+  test("unwraps a single nested field even when siblings are empty-string/null/empty-object", () => {
+    const schema = z.object({
+      payload: z.string(),
+      a: z.string().optional(),
+      b: z.string().optional(),
+      c: z.record(z.string(), z.unknown()).optional(),
+    });
+    const inner = { payload: "real", a: undefined, b: undefined, c: undefined };
+    // Put the whole valid object (as JSON) in `payload`; siblings are "", null, {}.
+    const value = {
+      payload: JSON.stringify(inner),
+      a: "",
+      b: null,
+      c: {},
+    };
+    expect(coerceToSchema(schema, value)).toEqual(inner);
+  });
+
+  // [13] isStringSchema must unwrap an optional() wrapper to find the inner string,
+  // so step 5 re-stringifies an object that arrived in an optional string field.
+  // (the unwrap loop body, line 170)
+  test("re-stringifies an object in an OPTIONAL string field (unwraps the optional wrapper)", () => {
+    const schema = z.object({ note: z.string().optional(), n: z.number() });
+    const value = { note: { a: 1 }, n: 3 };
+    expect(coerceToSchema(schema, value)).toEqual({ note: JSON.stringify({ a: 1 }), n: 3 });
+  });
+
+  // [14] tryJson must swallow a SyntaxError from malformed JSON that starts with a
+  // JSON-ish character, returning the original string unchanged. (catch, lines 182-183)
+  test("leaves a malformed JSON-looking string field untouched (tryJson catch path)", () => {
+    const value = { answer: "{ not valid json", caveats: [] };
+    expect(coerceToSchema(fa, value)).toEqual({ answer: "{ not valid json", caveats: [] });
+  });
 });
 
 describe("safeCoerce", () => {
