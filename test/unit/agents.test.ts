@@ -196,6 +196,41 @@ describe("resolveAgent error branches", () => {
     const agent = resolveAgent({ provider: "openai-compatible", model: "llama3", baseURL: "http://localhost:11434/v1", apiKey: "x" });
     expect(typeof agent.generate).toBe("function");
   });
+
+  test("an object spec with an unrecognized provider errors helpfully", () => {
+    // The object-spec API takes a free-form provider; a value outside the known
+    // set must fail with the register hint, not crash deep in a constructor.
+    expect(() =>
+      resolveAgent({ provider: "totally-bogus" as never, model: "x" }, env),
+    ).toThrow(/Unknown model|smithers agents add/);
+  });
+
+  test("a bare subscription provider with no registered account spawns the default-config CLI", () => {
+    // The fixture registers codex/gemini/claude-code but no kimi — so "kimi"
+    // takes the no-account branch and builds the CLI in its default config dir.
+    expect(typeof resolveAgent("kimi", env).generate).toBe("function");
+    // With no accounts at all, "codex" still resolves — and exercises the
+    // codex-only skipGitRepoCheck branch on the no-account path.
+    expect(typeof resolveAgent("codex", emptyEnv).generate).toBe("function");
+  });
+});
+
+describe("resolveModelSpec account/object id forms", () => {
+  test("<account>:<model> where the head is not a provider keyword", () => {
+    // "myaccount" is not a PROVIDER_KEYWORD, so it's read as an account label
+    // with a model override.
+    expect(resolveModelSpec("myaccount:opus")).toMatchObject({
+      id: "myaccount:opus",
+      account: "myaccount",
+      model: "opus",
+    });
+  });
+
+  test("objectId derives an id from provider/model when no explicit id is given", () => {
+    expect(resolveModelSpec({ provider: "openai" }).id).toBe("openai");
+    expect(resolveModelSpec({ model: "x" }).id).toBe("x");
+    expect(resolveModelSpec({}).id).toBe("model");
+  });
 });
 
 describe("createAgentFromAccount", () => {
