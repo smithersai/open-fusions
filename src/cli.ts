@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { Cli, z } from "incur";
+import pkg from "../package.json" with { type: "json" };
 import { defaultJudge, defaultPanel } from "./agents";
-import { OpenFusionsEngine } from "./engine";
+import { isTerminalPhase, OpenFusionsEngine, type EngineState } from "./engine";
 import { runFusion, type FuseResult } from "./fusion";
 import type { FusionConfig } from "./types";
 
@@ -12,17 +13,12 @@ export type CliDeps = {
 
 const looseOutput = z.unknown();
 
-const ctaSchema = z
-  .object({
-    description: z.string(),
-    commands: z.array(z.object({ command: z.string(), description: z.string() })),
-  })
-  .optional();
-
+// NOTE: the call-to-action (`cta`) is NOT part of the output *data* schema — it
+// is supplied via incur's `meta` argument to `c.ok`/`c.error` and injected into
+// the serialized payload at format time. Declaring it here too was dead schema.
 const baseCommandOutput = {
   session: z.string(),
   phase: z.string(),
-  cta: ctaSchema,
 };
 
 const judgmentOutput = z.object({
@@ -47,7 +43,7 @@ export function createCli(deps?: Partial<CliDeps>) {
   const fuseRaw = deps?.fuseRaw ?? runFusion;
 
   const cli = Cli.create("open-fusions", {
-    version: "0.0.0",
+    version: pkg.version,
     description: "Run local model fusions and advance the durable plan-implement-review-fix loop.",
     sync: {
       suggestions: ["plan a change with a fusion", "review my branch with a fusion"],
@@ -78,7 +74,22 @@ export function createCli(deps?: Partial<CliDeps>) {
       } catch (e) {
         return noModels(c, e);
       }
-      const st = await engine.start(c.args.task, { panel, judge }, c.options.session);
+      let st: EngineState;
+      try {
+        st = await engine.start(c.args.task, { panel, judge }, c.options.session);
+      } catch (e) {
+        // start() refuses to clobber an existing run id.
+        if (c.options.session && e instanceof Error && /already exists/i.test(e.message)) {
+          return c.error({
+            code: "RUN_EXISTS",
+            message: e.message,
+            retryable: false,
+            cta: nextCta("Inspect it:", `status --session ${c.options.session}`, "Show the existing run's status"),
+          });
+        }
+        throw e;
+      }
+      if (st.needsResume) return needsResumeError(c, st.runId);
       return c.ok(
         { session: st.runId, phase: st.phase, plan: st.output },
         { cta: nextCta("Next:", `implement --session ${st.runId}`, "Run the implementation fusion") },
@@ -95,11 +106,16 @@ export function createCli(deps?: Partial<CliDeps>) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
       const cur = await engine.state(c.options.session);
+      if (cur.status === "failed") return fusionFailedError(c, c.options.session, cur.phase);
+      if (cur.needsResume) return needsResumeError(c, c.options.session);
+      if (isTerminalPhase(cur.phase)) return terminalError(c, c.options.session, cur.phase);
       if (cur.phase !== "plan") {
         return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
       }
 
       const st = await engine.advance(c.options.session);
+      if (st.status === "failed") return fusionFailedError(c, c.options.session, st.phase);
+      if (st.needsResume) return needsResumeError(c, c.options.session);
       return c.ok(
         { session: c.options.session, phase: st.phase, implementation: st.output },
         { cta: nextCta("Next:", `review --session ${c.options.session}`, "Run the review fusion") },
@@ -120,11 +136,26 @@ export function createCli(deps?: Partial<CliDeps>) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
       const cur = await engine.state(c.options.session);
+      if (cur.status === "failed") return fusionFailedError(c, c.options.session, cur.phase);
+      if (cur.needsResume) return needsResumeError(c, c.options.session);
+      if (isTerminalPhase(cur.phase)) return terminalError(c, c.options.session, cur.phase);
+      if (cur.phase === "review" && cur.pendingGate && cur.lgtm === true) {
+        const done = await engine.advance(c.options.session);
+        if (done.status === "failed") return fusionFailedError(c, c.options.session, done.phase);
+        return c.ok(
+          { session: c.options.session, phase: done.phase, verdict: cur.output, lgtm: true },
+          { cta: nextCta("Done - LGTM", `result --session ${c.options.session}`, "Show the final result") },
+        );
+      }
       if (cur.phase !== "implement" && cur.phase !== "fix") {
         return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
       }
 
       const st = await engine.advance(c.options.session);
+      if (st.status === "failed") return fusionFailedError(c, c.options.session, st.phase);
+      // No verdict produced (e.g. the review synth failed): the run is now
+      // mid-flight. Don't pretend lgtm:false and send the user to `fix`.
+      if (st.needsResume || st.lgtm === null) return needsResumeError(c, c.options.session);
       if (st.lgtm === true) {
         const done = await engine.advance(c.options.session);
         return c.ok(
@@ -149,14 +180,42 @@ export function createCli(deps?: Partial<CliDeps>) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
       const cur = await engine.state(c.options.session);
+      if (cur.status === "failed") return fusionFailedError(c, c.options.session, cur.phase);
+      if (cur.needsResume) return needsResumeError(c, c.options.session);
+      if (isTerminalPhase(cur.phase)) return terminalError(c, c.options.session, cur.phase);
       if (!(cur.phase === "review" && cur.lgtm === false)) {
         return wrongPhase(c, c.options.session, commandFor(cur.phase), "Run the current phase command");
       }
 
       const st = await engine.advance(c.options.session);
+      if (st.status === "failed") return fusionFailedError(c, c.options.session, st.phase);
+      if (st.needsResume) return needsResumeError(c, c.options.session);
       return c.ok(
         { session: c.options.session, phase: st.phase, fix: st.output },
         { cta: nextCta("Next:", `review --session ${c.options.session}`, "Review the fixed changes") },
+      );
+    },
+  });
+
+  cli.command("resume", {
+    description: "Resume a run interrupted mid-step (crash recovery).",
+    options: z.object({ session: z.string() }),
+    output: z.object({ ...baseCommandOutput, lgtm: z.boolean().nullable() }),
+    examples: [{ options: { session: "of-123" }, description: "Resume an interrupted run" }],
+    async run(c) {
+      if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+      let st = await engine.resume(c.options.session);
+      if (st.status === "failed") return fusionFailedError(c, c.options.session, st.phase);
+      // If recovery landed on an LGTM verdict awaiting acknowledgement, finish
+      // it (mirrors the review command's auto-ack) so the run reaches `done`.
+      if (st.phase === "review" && st.pendingGate && st.lgtm === true) {
+        st = await engine.advance(c.options.session);
+        if (st.status === "failed") return fusionFailedError(c, c.options.session, st.phase);
+      }
+      const next = nextCommandFor(c.options.session, st);
+      return c.ok(
+        { session: c.options.session, phase: st.phase, lgtm: st.lgtm },
+        next ? { cta: nextCta(next.label, next.command, next.description) } : undefined,
       );
     },
   });
@@ -171,6 +230,10 @@ export function createCli(deps?: Partial<CliDeps>) {
     examples: [{ options: { session: "of-123" }, description: "Reject the pending gate" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
+      const cur = await engine.state(c.options.session);
+      if (cur.status === "failed") return fusionFailedError(c, c.options.session, cur.phase);
+      if (cur.needsResume) return needsResumeError(c, c.options.session);
+      if (isTerminalPhase(cur.phase)) return terminalError(c, c.options.session, cur.phase);
       const st = await engine.advance(c.options.session, "deny", c.options.note);
       return c.ok({ session: c.options.session, phase: st.phase });
     },
@@ -181,10 +244,12 @@ export function createCli(deps?: Partial<CliDeps>) {
     options: z.object({ session: z.string() }),
     output: z.object({
       session: z.string(),
+      status: z.string(),
       phase: z.string(),
       iteration: z.number(),
       lgtm: z.boolean().nullable(),
       pendingGate: z.string().nullable(),
+      needsResume: z.boolean(),
     }),
     examples: [{ options: { session: "of-123" }, description: "Check run status" }],
     async run(c) {
@@ -192,10 +257,12 @@ export function createCli(deps?: Partial<CliDeps>) {
       const st = await engine.state(c.options.session);
       return c.ok({
         session: c.options.session,
+        status: st.status,
         phase: st.phase,
         iteration: st.iteration,
         lgtm: st.lgtm,
         pendingGate: st.pendingGate,
+        needsResume: st.needsResume,
       });
     },
   });
@@ -268,6 +335,79 @@ function commandFor(phase: string): string {
   if (phase === "implement" || phase === "fix") return "review";
   if (phase === "review") return "fix";
   return "result";
+}
+
+/** The command to run next given a (non-error) state, for a CTA. */
+function nextCommandFor(
+  id: string,
+  st: EngineState,
+): { label: string; command: string; description: string } | null {
+  if (isTerminalPhase(st.phase)) {
+    return { label: "Done:", command: `result --session ${id}`, description: "Show the final result" };
+  }
+  if (st.needsResume) {
+    return { label: "Recover:", command: `resume --session ${id}`, description: "Resume the interrupted run" };
+  }
+  switch (st.phase) {
+    case "plan":
+      return { label: "Next:", command: `implement --session ${id}`, description: "Run the implementation fusion" };
+    case "implement":
+      return { label: "Next:", command: `review --session ${id}`, description: "Run the review fusion" };
+    case "review":
+      return st.lgtm === false
+        ? { label: "Next:", command: `fix --session ${id}`, description: "Run the fix fusion" }
+        : { label: "Next:", command: `review --session ${id}`, description: "Acknowledge the review" };
+    case "fix":
+      return { label: "Next:", command: `review --session ${id}`, description: "Review the fixed changes" };
+    default:
+      return null;
+  }
+}
+
+type ErrorWithCta = {
+  error(input: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    cta: { description: string; commands: { command: string; description: string }[] };
+  }): never;
+};
+
+/** A run interrupted mid-step (no pending gate but not terminal) needs `resume`. */
+function needsResumeError(c: ErrorWithCta, id: string): never {
+  return c.error({
+    code: "NEEDS_RESUME",
+    message: `Run was interrupted mid-step. Run resume --session ${id} to drive it to the next gate.`,
+    retryable: true,
+    cta: nextCta("Recover:", `resume --session ${id}`, "Resume the interrupted run"),
+  });
+}
+
+function fusionFailedError(c: ErrorWithCta, id: string, phase: string): never {
+  return c.error({
+    code: "FUSION_FAILED",
+    message:
+      `The ${phase} fusion failed to produce valid output; this run cannot be resumed. ` +
+      `Run result --session ${id} to inspect it, or start a new run.`,
+    retryable: false,
+    cta: nextCta("Inspect it:", `result --session ${id}`, "Show the current run output"),
+  });
+}
+
+/** A finished run (done/stopped/exhausted) cannot be advanced — point to `result`. */
+function terminalError(c: ErrorWithCta, id: string, phase: string): never {
+  const reason =
+    phase === "stopped"
+      ? "Run is stopped — a gate was denied."
+      : phase === "exhausted"
+        ? "Run exhausted its review budget without reaching LGTM."
+        : "Run is already complete.";
+  return c.error({
+    code: "RUN_TERMINAL",
+    message: `${reason} Run result --session ${id} to view it, or start a new run.`,
+    retryable: false,
+    cta: nextCta("View it:", `result --session ${id}`, "Show the final result"),
+  });
 }
 
 function missingSession(
