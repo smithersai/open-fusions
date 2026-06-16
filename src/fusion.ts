@@ -1,11 +1,15 @@
 /** @jsxImportSource smithers-orchestrator */
 
-import { unlinkSync } from "node:fs";
+import { mkdirSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { createSmithers, runWorkflow } from "smithers-orchestrator";
 import { jsx as rawJsx, jsxs as rawJsxs } from "smithers-orchestrator/jsx-runtime";
 import type { z } from "zod";
 import { buildPanel, defaultJudge, resolveAgent, resolveModelSpec } from "./agents";
+import { coerceToSchema, safeCoerce } from "./coerce";
+import { FusionError } from "./errors";
 import { readLatest, readOutputs, tableNameFor } from "./outputs";
 import { judgePrompt } from "./prompts/judge";
 import { panelistPrompt } from "./prompts/panelist";
@@ -23,7 +27,25 @@ export type RunStatus =
   | "waiting-event"
   | "waiting-timer";
 
-export type FuseInput = {
+/**
+ * Bounded retries per task. smithers' graph builder defaults an agent Task to
+ * `retries: Infinity` (verified in `@smithers-orchestrator/graph` extract.js),
+ * so a permanently-failing model — e.g. a stale account model the provider
+ * 400s — would retry forever and hang the whole fusion. `retries: 2` means up
+ * to 3 attempts, then fail.
+ */
+export const DEFAULT_RETRIES = 2;
+/** Per-task wall-clock safety net against a hung CLI harness (10 minutes). */
+export const DEFAULT_TIMEOUT_MS = 600_000;
+
+export type ReliabilityOptions = {
+  /** Retries per task before it fails; total attempts = retries + 1 (default {@link DEFAULT_RETRIES}). */
+  retries?: number;
+  /** Per-task timeout in ms (default {@link DEFAULT_TIMEOUT_MS}). */
+  timeoutMs?: number;
+};
+
+export type FuseInput = ReliabilityOptions & {
   prompt: string;
   panel: PanelMember[];
   judge: PanelMember;
@@ -37,7 +59,7 @@ export type FuseResult = FusionResult & {
   status: RunStatus;
 };
 
-export type FuseWithInput<TSchema extends z.ZodObject<any>> = {
+export type FuseWithInput<TSchema extends z.ZodObject<any>> = ReliabilityOptions & {
   prompt: string;
   panel: PanelMember[];
   judge: PanelMember;
@@ -78,7 +100,7 @@ type SmithersKit = {
 };
 type WorkflowRunner = (
   workflow: unknown,
-  options: { input: Record<string, unknown>; runId: string },
+  options: { input: Record<string, unknown>; runId: string; logDir?: string },
 ) => unknown;
 type CreateSmithersLite = (
   schemas: Record<string, unknown>,
@@ -116,9 +138,20 @@ export async function fuse(input: FuseInput): Promise<FuseResult> {
 export async function fuseWith<TSchema extends z.ZodObject<any>>(
   input: FuseWithInput<TSchema>,
 ): Promise<FuseWithResult<TSchema>> {
-  const runId = input.runId ?? `fusion-${Date.now()}`;
-  const dbPath =
-    input.dbPath ?? `/tmp/open-fusions-${runId}-${Math.floor(Math.random() * 1_000_000)}.db`;
+  if (input.panel.length === 0) {
+    throw new FusionError(
+      "A fusion needs at least one panel model. Pass `panel`, or register a subscription with `smithers agents add`.",
+    );
+  }
+  const retries = input.retries ?? DEFAULT_RETRIES;
+  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // UUID id + OS temp dir: collision-free across concurrent fusions, portable.
+  const runId = input.runId ?? `fusion-${crypto.randomUUID()}`;
+  const dbPath = input.dbPath ?? join(tmpdir(), `open-fusions-${runId}.db`);
+  // Direct smithers' workflow logs to a temp dir, not stdout — otherwise they
+  // pollute `fuse --json` output (smithers logs structured lines to stdout).
+  const logDir = `${dbPath}.logs`;
+  mkdirSync(logDir, { recursive: true });
   const createSmithersLite = createSmithers as unknown as CreateSmithersLite;
   const runWorkflowLite = runWorkflow as unknown as WorkflowRunner;
   const runPromiseLite = Effect.runPromise as unknown as (effect: unknown) => Promise<{ status: RunStatus }>;
@@ -137,7 +170,9 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
             Parallel,
             {
               maxConcurrency: input.panel.length,
-              continueOnFail: true,
+              // NOTE: `continueOnFail` is read per-Task by smithers, not on
+              // <Parallel> — it's set on each panelist below so one failing
+              // panelist can't sink the whole fusion.
               children: input.panel.map((member) =>
                 h(
                   Task,
@@ -145,6 +180,9 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
                     id: `panelist-${member.id}`,
                     output: outputs.panelResponse,
                     agent: member.agent,
+                    retries,
+                    timeoutMs,
+                    continueOnFail: true,
                     children: panelistPrompt(input.prompt, member.id),
                   },
                   member.id,
@@ -159,6 +197,11 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
               id: "judge",
               output: outputs.judgment,
               agent: input.judge.agent,
+              retries,
+              timeoutMs,
+              // Tolerate a failed judge: the synthesizer falls back to an empty
+              // judgment rather than failing the whole fusion.
+              continueOnFail: true,
               children: judgePrompt(input.prompt, responses),
             },
             "judge",
@@ -169,6 +212,9 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
               id: "synthesize",
               output: outputs.synthesis,
               agent: input.synthesizer.agent,
+              retries,
+              timeoutMs,
+              continueOnFail: true,
               children: synthesizePrompt(input.prompt, latestJudgment, responses),
             },
             "synthesize",
@@ -178,18 +224,51 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
     });
   });
 
-  const res = await runPromiseLite(runWorkflowLite(wf, { input: {}, runId }));
-  const panel = readOutputs(dbPath, runId, tableNameFor("panelResponse")) as PanelResponse[];
-  const latestJudgment = readLatest(dbPath, runId, tableNameFor("judgment")) as Judgment | undefined;
-  const latestOutput = readLatest(dbPath, runId, tableNameFor("synthesis")) as z.infer<TSchema> | undefined;
+  const res = await runPromiseLite(runWorkflowLite(wf, { input: {}, runId, logDir }));
 
-  if (input.cleanup !== false) {
-    cleanupDb(dbPath);
+  // Read everything out before cleanup; `finally` guarantees the temp db is
+  // removed even if a read throws (no leaked file on the error path).
+  let panelRows: Record<string, unknown>[];
+  let judgmentRow: Record<string, unknown> | undefined;
+  let outputRow: Record<string, unknown> | undefined;
+  try {
+    panelRows = readOutputs(dbPath, runId, tableNameFor("panelResponse"));
+    judgmentRow = readLatest(dbPath, runId, tableNameFor("judgment"));
+    outputRow = readLatest(dbPath, runId, tableNameFor("synthesis"));
+  } finally {
+    if (input.cleanup !== false) {
+      cleanupDb(dbPath);
+    }
+  }
+
+  // Coerce loosely-structured model output back to the schema (CLI harnesses
+  // without native structured output commonly double-encode). Drop panel rows
+  // that can't be recovered; fall back to an empty judgment if the judge's was
+  // malformed; a missing/invalid synthesized output is a hard error.
+  const panel = panelRows
+    .map((row) => safeCoerce(panelResponse, row))
+    .filter((row): row is PanelResponse => row !== undefined);
+  const judgmentResult = judgmentRow ? safeCoerce(judgment, judgmentRow) : undefined;
+
+  if (outputRow === undefined) {
+    throw new FusionError(
+      `Fusion produced no synthesized output (run ${runId}, status: ${res.status}). ` +
+        "All panelists or the synthesizer may have failed — check the model ids and logs.",
+    );
+  }
+  let output: z.infer<TSchema>;
+  try {
+    output = coerceToSchema(input.schema, outputRow) as z.infer<TSchema>;
+  } catch (cause) {
+    throw new FusionError(
+      `Fusion synthesizer output did not match the expected schema (run ${runId}).`,
+      { cause },
+    );
   }
 
   return {
-    output: input.schema.parse(latestOutput),
-    judgment: latestJudgment ?? emptyJudgment,
+    output,
+    judgment: judgmentResult ?? emptyJudgment,
     panel,
     status: res.status as RunStatus,
   };
@@ -224,5 +303,10 @@ function cleanupDb(dbPath: string): void {
     } catch {
       // Best-effort cleanup: the caller already has the fusion result.
     }
+  }
+  try {
+    rmSync(`${dbPath}.logs`, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup of the temp log dir.
   }
 }
