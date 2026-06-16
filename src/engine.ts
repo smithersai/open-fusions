@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { approveNode, denyNode, loadOutputs, runWorkflow } from "smithers-orchestrator";
@@ -14,6 +14,13 @@ export type EngineState = {
   phase: EnginePhase;
   /** The approval node id awaiting a decision, or null when finished/stopped. */
   pendingGate: string | null;
+  /**
+   * True when the run is mid-flight (a non-terminal phase with no pending gate
+   * and the current phase's output not yet produced) — e.g. a crash between
+   * approving a gate and running the next fusion. {@link OpenFusionsEngine.resume}
+   * drives such a run forward; without it the run would be permanently stuck.
+   */
+  needsResume: boolean;
   /** Current review→fix iteration. */
   iteration: number;
   /** Latest review verdict, when a review has run. */
@@ -21,6 +28,13 @@ export type EngineState = {
   /** The synthesized output of the current phase (plan/implementation/verdict/fix). */
   output: unknown;
 };
+
+/** Phases past which there is nothing left to run. */
+const TERMINAL_PHASES: ReadonlySet<EnginePhase> = new Set(["done", "stopped", "exhausted"]);
+
+export function isTerminalPhase(phase: EnginePhase): boolean {
+  return TERMINAL_PHASES.has(phase);
+}
 
 export type EngineOptions = {
   /** Directory holding the per-run durable databases. Default `.open-fusions`. */
@@ -38,6 +52,9 @@ export type RunConfig = {
 
 type Row = Record<string, unknown> & { nodeId?: string };
 type Outputs = Record<string, Row[] | undefined>;
+type RunReader = {
+  getRun(runId: string): unknown;
+};
 
 /**
  * Drives the durable plan→implement→review→fix run. Each call rebuilds the
@@ -58,42 +75,123 @@ export class OpenFusionsEngine {
   }
 
   private pipeline(runId: string) {
-    mkdirSync(this.dir, { recursive: true });
+    // mode 0o700: the durable db holds the task, plan, code summaries, and model
+    // outputs — keep it readable only by the owner on shared hosts.
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     return buildPipeline(this.dbPathFor(runId), { agentFor: this.agentFor });
+  }
+
+  /** Close the per-operation SQLite handle so long-lived programmatic use of the
+   *  engine doesn't leak a connection per call (durability lives on disk). */
+  private closeApi(api: { db: unknown }): void {
+    try {
+      (api as { db?: { close?: () => void } }).db?.close?.();
+    } catch {
+      // Best effort — never mask the operation's result/error.
+    }
+  }
+
+  private async resumeRun(
+    runId: string,
+    pieces: { workflow: unknown; api: { db: unknown; tables: unknown } },
+  ): Promise<EngineState> {
+    return await this.runResumeWorkflow(runId, pieces);
+  }
+
+  private async runResumeWorkflow(
+    runId: string,
+    pieces: { workflow: unknown; api: { db: unknown; tables: unknown } },
+  ): Promise<EngineState> {
+    // resume:true with an empty input — smithers loads the persisted run input
+    // (task/panel/judge), so the tree rebuilds identically.
+    const res = (await Effect.runPromise(
+      runWorkflow(pieces.workflow as never, { input: {}, runId, resume: true, logDir: join(this.dir, "logs") }) as never,
+    )) as { status: string };
+    return deriveStateFromOutputs(runId, res.status, await readOutputs(pieces.api, runId));
+  }
+
+  private async currentState(
+    runId: string,
+    pieces: { api: { db: unknown; tables: unknown }; adapter: RunReader },
+  ): Promise<EngineState> {
+    const [realStatus, outputs] = await Promise.all([
+      readRunStatus(pieces.adapter, runId),
+      readOutputs(pieces.api, runId),
+    ]);
+    return deriveStateFromOutputs(runId, realStatus, outputs);
   }
 
   /** Start a new durable run; produces the plan and pauses at the plan gate. */
   async start(task: string, config: RunConfig, runId = genRunId()): Promise<EngineState> {
+    // Starting onto an existing run id would silently re-attach to the old run
+    // and drop the new task/panel/judge (smithers ignores the input on a run
+    // that already exists). Refuse it — use advance()/resume() to continue.
+    if (existsSync(this.dbPathFor(runId))) {
+      throw new Error(
+        `A run with id "${runId}" already exists. Use advance()/resume() to continue it, ` +
+          "or choose a new id to start a fresh run.",
+      );
+    }
     const { workflow, api } = this.pipeline(runId);
-    const input: Record<string, unknown> = { task, panel: config.panel, judge: config.judge };
-    if (config.synthesizer) input.synthesizer = config.synthesizer;
-    const res = (await Effect.runPromise(
-      runWorkflow(workflow as never, { input, runId, logDir: join(this.dir, "logs") }) as never,
-    )) as { status: string };
-    return deriveStateFromOutputs(runId, res.status, await readOutputs(api, runId));
+    try {
+      const input: Record<string, unknown> = { task, panel: config.panel, judge: config.judge };
+      if (config.synthesizer) input.synthesizer = config.synthesizer;
+      const res = (await Effect.runPromise(
+        runWorkflow(workflow as never, { input, runId, logDir: join(this.dir, "logs") }) as never,
+      )) as { status: string };
+      return deriveStateFromOutputs(runId, res.status, await readOutputs(api, runId));
+    } finally {
+      this.closeApi(api);
+    }
   }
 
   /**
    * Advance one phase: approve (or deny) the currently-pending gate, then resume
-   * the run to the next gate. Returns the new state.
+   * the run to the next gate. When there is no pending gate but the run is
+   * mid-flight (interrupted), resume it instead of returning the stuck state.
    */
   async advance(runId: string, decision: "approve" | "deny" = "approve", note?: string): Promise<EngineState> {
     const { workflow, api, adapter } = this.pipeline(runId);
-    const before = deriveStateFromOutputs(runId, "waiting-approval", await readOutputs(api, runId));
-    if (!before.pendingGate) return before;
+    try {
+      const before = await this.currentState(runId, { api, adapter });
+      if (!before.pendingGate) {
+        // No gate to decide. If the run was interrupted mid-fusion, drive it
+        // forward; if it is terminal, there is nothing to do.
+        if (before.needsResume) return await this.resumeRun(runId, { workflow, api });
+        return before;
+      }
 
-    const decide = decision === "approve" ? approveNode : denyNode;
-    await Effect.runPromise(decide(adapter as never, runId, before.pendingGate, 0, note) as never);
-    const res = (await Effect.runPromise(
-      runWorkflow(workflow as never, { input: {}, runId, resume: true, logDir: join(this.dir, "logs") }) as never,
-    )) as { status: string };
-    return deriveStateFromOutputs(runId, res.status, await readOutputs(api, runId));
+      const decide = decision === "approve" ? approveNode : denyNode;
+      await Effect.runPromise(decide(adapter as never, runId, before.pendingGate, 0, note) as never);
+      return await this.resumeRun(runId, { workflow, api });
+    } finally {
+      this.closeApi(api);
+    }
+  }
+
+  /**
+   * Drive an interrupted run forward to its next gate (crash recovery). A no-op
+   * for a run that is already at a gate or terminal.
+   */
+  async resume(runId: string): Promise<EngineState> {
+    const { workflow, api, adapter } = this.pipeline(runId);
+    try {
+      const before = await this.currentState(runId, { api, adapter });
+      if (!before.needsResume) return before;
+      return await this.runResumeWorkflow(runId, { workflow, api });
+    } finally {
+      this.closeApi(api);
+    }
   }
 
   /** Read current state without advancing. */
   async state(runId: string): Promise<EngineState> {
-    const { api } = this.pipeline(runId);
-    return deriveStateFromOutputs(runId, "loaded", await readOutputs(api, runId));
+    const { api, adapter } = this.pipeline(runId);
+    try {
+      return await this.currentState(runId, { api, adapter });
+    } finally {
+      this.closeApi(api);
+    }
   }
 }
 
@@ -107,6 +205,21 @@ async function readOutputs(api: { db: unknown; tables: unknown }, runId: string)
   return (await loadOutputs(api.db as never, api.tables as never, runId)) as Outputs;
 }
 
+async function readRunStatus(adapter: RunReader, runId: string): Promise<string | undefined> {
+  const runPromise = Effect.runPromise as unknown as (effect: unknown) => Promise<unknown>;
+  const run = await runPromise(adapter.getRun(runId));
+  return isRunRecord(run) ? run.status : undefined;
+}
+
+function isRunRecord(value: unknown): value is { status: string } {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "status" in value &&
+    typeof (value as { status?: unknown }).status === "string"
+  );
+}
+
 function stripMeta(row: Row | undefined): unknown {
   if (!row) return undefined;
   const { runId: _r, nodeId: _n, iteration: _i, ...rest } = row as Record<string, unknown>;
@@ -114,10 +227,29 @@ function stripMeta(row: Row | undefined): unknown {
 }
 
 /**
+ * The run's lifecycle status. Prefers a real terminal status reported by the
+ * runtime (failed/cancelled); otherwise derives it from the phase so callers
+ * never see a fabricated placeholder like "loaded".
+ */
+function lifecycleStatus(phase: EnginePhase, pendingGate: string | null, real?: string): string {
+  if (real === "failed" || real === "cancelled") return real;
+  if (phase === "done" || phase === "exhausted") return "finished";
+  if (phase === "stopped") return real ?? "finished"; // gate denied; run continued past it
+  if (pendingGate) return "waiting-approval";
+  return real === "finished" ? "finished" : "running"; // mid-flight / not yet at a gate
+}
+
+function isTerminalRunStatus(status: string | undefined): boolean {
+  return status === "finished" || status === "failed" || status === "cancelled";
+}
+
+/**
  * Pure derivation of the run's phase from its persisted outputs — mirrors the
  * pipeline's render conditions. Pure + synchronous so it is trivially testable.
+ * `realStatus` is the runtime's reported run status, used only as a hint for
+ * terminal states; otherwise the status is derived from the phase.
  */
-export function deriveStateFromOutputs(runId: string, status: string, outs: Outputs): EngineState {
+export function deriveStateFromOutputs(runId: string, realStatus: string | undefined, outs: Outputs): EngineState {
   const synth = (schemaKey: string, prefix: string): Row | undefined =>
     outs[schemaKey]?.find((r) => r.nodeId === `${prefix}-synth`);
   const gate = (nodeId: string): Row | undefined => outs.gate?.find((r) => r.nodeId === nodeId);
@@ -130,7 +262,20 @@ export function deriveStateFromOutputs(runId: string, status: string, outs: Outp
     iteration: number,
     lgtm: boolean | null,
     output: Row | undefined,
-  ): EngineState => ({ runId, status, phase, pendingGate, iteration, lgtm, output: stripMeta(output) });
+  ): EngineState => {
+    const needsResume = pendingGate === null && !isTerminalPhase(phase);
+    const terminalBeforeGate = needsResume && isTerminalRunStatus(realStatus);
+    return {
+      runId,
+      status: terminalBeforeGate ? "failed" : lifecycleStatus(phase, pendingGate, realStatus),
+      phase,
+      pendingGate,
+      needsResume: terminalBeforeGate ? false : needsResume,
+      iteration,
+      lgtm,
+      output: stripMeta(output),
+    };
+  };
 
   const planOut = synth("plan", "plan");
   if (!planOut) return mk("plan", null, 0, null, undefined);

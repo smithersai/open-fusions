@@ -97,3 +97,58 @@ test("durable pipeline advances plan→implement→review→fix→review→done 
   const state = await newEngine().state("run-1");
   expect(state.phase).toBe("done");
 }, 60_000);
+
+test("denying a gate through the real engine stops the run (denyNode + onDeny:continue + deriver)", async () => {
+  const engine = new OpenFusionsEngine({ dir, agentFor: makeStubAgentFor() });
+  const runId = "run-deny";
+  const started = await engine.start("add rate limiting", { panel: ["a"], judge: "j" }, runId);
+  expect(started.pendingGate).toBe("plan-gate");
+
+  const denied = await engine.advance(runId, "deny", "not this plan");
+  expect(denied.phase).toBe("stopped");
+  expect(denied.pendingGate).toBeNull();
+
+  // The stopped state is durable across a fresh engine and a terminal phase
+  // cannot be advanced further.
+  const reread = await new OpenFusionsEngine({ dir, agentFor: makeStubAgentFor() }).state(runId);
+  expect(reread.phase).toBe("stopped");
+  expect(reread.needsResume).toBe(false);
+}, 60_000);
+
+test("exhausting the review→fix budget ends in 'exhausted', never a false 'done'", async () => {
+  // A stub whose review NEVER reaches lgtm, so the loop runs the full budget.
+  const neverLgtm = (): (() => AgentLike) => {
+    const cannedFor = (schema: unknown): unknown => {
+      const candidates: unknown[] = [
+        { steps: [{ title: "s", detail: "d" }], risks: [], files: ["a.ts"] },
+        { summary: "implemented", changes: [{ file: "a.ts", description: "x" }] },
+        { lgtm: false, summary: "still issues", issues: [{ severity: "high", description: "nope" }] },
+        { model: "stub", answer: "a", confidence: "high" },
+        { consensus: ["c"], contradictions: [], uniqueInsights: [], blindSpots: [], recommendation: "r", confidence: "high" },
+        { answer: "final", caveats: [] },
+      ];
+      const parse = (schema as { safeParse?: (v: unknown) => { success: boolean } } | undefined)?.safeParse;
+      for (const c of candidates) if (parse?.(c)?.success) return c;
+      return {};
+    };
+    const agent = {
+      supportsNativeStructuredOutput: true,
+      async generate(args?: unknown) {
+        return { output: cannedFor((args as { outputSchema?: unknown } | undefined)?.outputSchema) };
+      },
+    };
+    return () => agent as AgentLike;
+  };
+  const agentFor = neverLgtm();
+  const engine = new OpenFusionsEngine({ dir, agentFor });
+  const runId = "run-exhaust";
+  await engine.start("task", { panel: ["a"], judge: "j" }, runId);
+  // Drive the run until it stops progressing (each advance clears one gate).
+  let st = await engine.state(runId);
+  for (let i = 0; i < 40 && st.pendingGate; i++) {
+    st = await engine.advance(runId);
+  }
+  expect(st.phase).toBe("exhausted");
+  expect(st.lgtm).toBe(false);
+  expect(st.pendingGate).toBeNull();
+}, 120_000);

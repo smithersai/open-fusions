@@ -22,6 +22,31 @@ describe("deriveStateFromOutputs", () => {
     expect(derive({ plan: [planRow] })).toMatchObject({ phase: "plan", pendingGate: "plan-gate" });
   });
 
+  test("needsResume: true for a mid-flight phase with no pending gate, false otherwise", () => {
+    // Impl approved but no implementation output yet → in-flight, must resume.
+    expect(
+      derive({ plan: [planRow], gate: [gate("plan-gate", true)] }),
+    ).toMatchObject({ phase: "implement", pendingGate: null, needsResume: true });
+    // Sitting at a gate → nothing to resume.
+    expect(derive({ plan: [planRow] })).toMatchObject({ pendingGate: "plan-gate", needsResume: false });
+    // Terminal → nothing to resume.
+    expect(
+      derive({ plan: [planRow], gate: [gate("plan-gate", false)] }),
+    ).toMatchObject({ phase: "stopped", needsResume: false });
+  });
+
+  test("status reflects the lifecycle, never the fabricated 'loaded' placeholder", () => {
+    expect(derive({}).status).not.toBe("loaded");
+    expect(derive({ plan: [planRow] }).status).toBe("waiting-approval");
+    const doneOuts = {
+      plan: [planRow],
+      implementation: [implRow],
+      reviewVerdict: [review(0, true)],
+      gate: [gate("plan-gate", true), gate("impl-gate", true), gate("review-0-gate", true)],
+    };
+    expect(deriveStateFromOutputs("r", "finished", doneOuts).status).toBe("finished");
+  });
+
   test("output strips run/node/iteration metadata", () => {
     const out = derive({ plan: [{ ...planRow, runId: "x", iteration: 3 }] }).output as Record<string, unknown>;
     expect(out).not.toHaveProperty("nodeId");
