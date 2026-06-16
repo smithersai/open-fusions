@@ -9,7 +9,10 @@
 `open-fusions` runs **model fusions locally** and ships a coding loop where **every
 step is a fusion**. A "fusion" = fan one prompt across a **panel** of different
 models in parallel → a **judge** model analyzes consensus/contradictions/blind-spots
-→ a **synthesizer** writes one final answer. (This mirrors OpenRouter's "Fusion".)
+→ a **synthesizer** writes one final answer. open-fusions is a **local alternative to a
+hosted router** like OpenRouter: it runs the fusion on your machine against your own
+**smithers agents** — the subscription harnesses you're already logged into — with no
+special API key.
 
 It is consumed two ways:
 1. **CLI**: `open-fusions <command>` (built with `incur`).
@@ -107,13 +110,21 @@ import { z } from "zod"; // zod v4 — schemas MUST be v4 (smithers reads schema
   - `<Task ... needsApproval />` = pure pause before a task, no decision payload.
 - `ctx` in `smithers((ctx) => jsx)`: `ctx.input`, `ctx.outputs.<key>` (→ **array** of all rows for that key),
   `ctx.outputMaybe(outputs.k, { nodeId })`, `ctx.output(...)`, `ctx.runId`, `ctx.iteration`.
-- Agents (use the **AI-SDK** path; one key → whole catalog via OpenRouter's OpenAI-compatible endpoint):
+- Agents — default to the user's **subscription harnesses** via the `smithers agents`
+  account registry (`@smithers-orchestrator/accounts`); opt-in API backends are explicit:
   ```ts
-  new OpenAIAgent({ model: "openai/gpt-...", baseURL: "https://openrouter.ai/api/v1",
-                    apiKey: process.env.OPENROUTER_API_KEY, instructions, nativeStructuredOutput: false })
+  import { listAccounts, getAccount } from "@smithers-orchestrator/accounts";
+  // subscription harness from a registered account (no API key — spawns the local CLI):
+  new ClaudeCodeAgent({ model, configDir: account.configDir, cwd: process.cwd() })
+  // opt-in OpenRouter / any OpenAI-compatible endpoint:
+  new OpenAIAgent({ model: "anthropic/claude-...", baseURL: "https://openrouter.ai/api/v1",
+                    apiKey: process.env.OPENROUTER_API_KEY, nativeStructuredOutput: false })
   new AnthropicAgent({ model: "claude-...", instructions })
   ```
-  An **AgentLike** is any `{ generate(args?) => Promise<{ output }> }`. Stub it in tests:
+  `src/agents.ts` centralizes this: `resolveAgent(spec)` passes an `AgentLike` straight
+  through, resolves a string/object via the registry + provider grammar (subscriptions,
+  `openrouter:`, `openai:`/`anthropic:`, `compat:`), and `defaultPanel()`/`defaultJudge()`
+  read `listAccounts()`. An **AgentLike** is any `{ generate(args?) => Promise<{ output }> }`. Stub it in tests:
   ```ts
   const stub = (out) => ({ async generate() { return { output: out }; } });
   ```
@@ -199,9 +210,14 @@ accept an injected `run` function so a unit test can avoid the smithers runtime 
 
 ## Env / config
 
-- `OPENROUTER_API_KEY` (default routing), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
-- Default panel = a few diverse OpenRouter models; judge defaults to a strong model. All overridable
-  via CLI options / `FusionConfig`. The judge choice matters (swings quality), so make it configurable.
+- **No key by default.** Subscription harnesses authenticate via their own CLI login
+  (`smithers agents add`); the agent classes spawn those CLIs. Keys are only for opt-in
+  backends: `OPENROUTER_API_KEY` (`openrouter:`), `OPENAI_BASE_URL` + `OPENAI_API_KEY`
+  (`compat:`), `ANTHROPIC_API_KEY` (`anthropic:`).
+- Default panel = the user's **registered subscription accounts** (`listAccounts()`, capped);
+  judge prefers a `claude-code` account, else the strongest available. Zero accounts → a
+  clear error pointing at `smithers agents add`. All overridable via CLI options / `FusionConfig`.
+  The judge choice matters (swings quality), so keep it configurable.
 
 ## Definition of done for any module
 

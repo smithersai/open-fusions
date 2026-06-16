@@ -164,9 +164,23 @@ Because the run is durable, any command runs in a fresh process and resumes the 
 | `--session "id"` | Target an existing durable run (pin an id on `plan`) |
 | `OPEN_FUSIONS_DIR` | Where durable runs are stored (default `.open-fusions/`) |
 
-Panel/judge values are **smithers agent ids** — subscription harnesses (`claude-code`,
-`codex`, `gemini`, …) or any model smithers supports. They're persisted in the run on
-`plan`, so every resume rebuilds the identical pipeline.
+Panel/judge values are **smithers agent ids** — by default a registered subscription
+harness, named by account label (`codex-1`) or provider (`claude-code`, `codex`, `gemini`),
+optionally with a model (`codex:gpt-5.5`). Run `smithers agents add` to register one. With
+no `--panel`, open-fusions uses your registered subscriptions; they're persisted in the run
+on `plan`, so every resume rebuilds the identical pipeline.
+
+Prefer a hosted backend instead? open-fusions is a local **alternative** to a router, but
+the CLI still supports them as opt-in ids:
+
+| Id form | Backend | Auth |
+| --- | --- | --- |
+| `openrouter:anthropic/claude-opus-4.8` | OpenRouter | `OPENROUTER_API_KEY` |
+| `compat:llama3` | any OpenAI-compatible endpoint (Ollama, vLLM, gateway) | `OPENAI_BASE_URL` + `OPENAI_API_KEY` |
+| `openai:gpt-5.5` / `anthropic:claude-opus-4.8` | native provider SDK | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
+
+Programmatically, you can also pass any constructed smithers agent (`new ClaudeCodeAgent(…)`,
+`new OpenAIAgent({ baseURL, apiKey, model })`) straight into `panel` / `judge`.
 
 ## Programmatic API
 
