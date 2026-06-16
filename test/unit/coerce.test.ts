@@ -59,6 +59,37 @@ describe("coerceToSchema", () => {
   test("does not fabricate fields — partial data still fails", () => {
     expect(() => coerceToSchema(fa, { answer: "only answer" })).toThrow();
   });
+
+  // [8] An already-valid object must NOT be silently replaced by an inner
+  // self-similar object when a sibling field carries real data. Here `answer`
+  // legitimately holds JSON of the same shape, but `caveats` has real content —
+  // unwrapping would drop it. The faithful reading keeps the top-level object.
+  test("keeps an already-valid object when a sibling field carries real data", () => {
+    const innerJson = JSON.stringify({ answer: "x", caveats: [] });
+    const value = { answer: innerJson, caveats: ["a real caveat"] };
+    expect(coerceToSchema(fa, value)).toEqual(value);
+  });
+
+  // [9] outputs.parseJsonLike eagerly turns a JSON-looking string column into an
+  // object before coerce runs. When the schema field is a string, coerce must
+  // re-stringify it back rather than failing — a legitimately JSON answer.
+  test("re-stringifies an object that arrived where the schema expects a string", () => {
+    const value = { answer: { port: 8080, host: "localhost" }, caveats: [] };
+    expect(coerceToSchema(fa, value)).toEqual({
+      answer: JSON.stringify({ port: 8080, host: "localhost" }),
+      caveats: [],
+    });
+  });
+
+  // [10] When more than one sibling field validates against the whole schema the
+  // unwrap is ambiguous; coerce must be deterministic and fall through to the
+  // direct parse rather than silently picking the first key.
+  test("does not silently unwrap when two sibling fields both validate (ambiguous)", () => {
+    const permissive = z.object({ a: z.string().optional(), b: z.string().optional() });
+    const value = { a: "{}", b: "{}" }; // both parse to {}, which validates
+    // Deterministic: the top-level object is itself valid, so it is returned as-is.
+    expect(coerceToSchema(permissive, value)).toEqual({ a: "{}", b: "{}" });
+  });
 });
 
 describe("safeCoerce", () => {
