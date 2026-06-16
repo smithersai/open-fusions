@@ -237,16 +237,16 @@ export function createCli(deps?: Partial<CliDeps>) {
     examples: [{ args: { prompt: "Compare these approaches" }, description: "Run a raw fusion" }],
     async run(c) {
       let panel: string[];
+      let judge: string;
       try {
+        // Resolve BOTH here so a NO_MODELS failure (panel or judge) is caught;
+        // otherwise the judge default throws deep inside runFusion, unhandled.
         panel = splitList(c.options.panel) ?? defaultPanel();
+        judge = c.options.judge ?? defaultJudge();
       } catch (e) {
         return noModels(c, e);
       }
-      const result = await fuseRaw({
-        prompt: c.args.prompt,
-        panel,
-        ...(c.options.judge ? { judge: c.options.judge } : undefined),
-      });
+      const result = await fuseRaw({ prompt: c.args.prompt, panel, judge });
       return c.ok({ answer: result.answer, judgment: result.judgment, panel: result.panel });
     },
   });
