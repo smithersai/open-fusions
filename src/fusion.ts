@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { createSmithers, runWorkflow } from "smithers-orchestrator";
+import { createSmithers, runWorkflow, SmithersErrorInstance } from "smithers-orchestrator";
 import { jsx as rawJsx, jsxs as rawJsxs } from "smithers-orchestrator/jsx-runtime";
 import type { z } from "zod";
 import { buildPanel, defaultJudge, resolveAgent, resolveModelSpec } from "./agents";
@@ -19,6 +19,7 @@ import type { Judgment, PanelResponse } from "./schemas";
 import type { AgentLike, FusionConfig, FusionResult, ModelSpec, PanelMember } from "./types";
 
 export type RunStatus =
+  | "running"
   | "finished"
   | "failed"
   | "cancelled"
@@ -106,6 +107,21 @@ type CreateSmithersLite = (
   schemas: Record<string, unknown>,
   options: { dbPath: string },
 ) => SmithersKit;
+type SchemaLike = {
+  safeParse(value: unknown): { success: true } | { success: false; error: unknown };
+};
+type GenerateArgsWithSchema = {
+  outputSchema?: SchemaLike;
+};
+type GenerateResultWithOutput = {
+  output?: unknown;
+  _output?: unknown;
+};
+type StructuredOutputResult = {
+  present: boolean;
+  field?: "_output" | "output";
+  value: unknown;
+};
 
 // Element factories from the smithers JSX runtime. Building the tree by calling
 // these directly is exactly what JSX compiles to, while avoiding `jsxImportSource`
@@ -114,6 +130,7 @@ type CreateSmithersLite = (
 // keyless children in the panel fan-out.
 const h = rawJsx;
 const hs = rawJsxs;
+const schemaFailFastAgents = new WeakMap<AgentLike, AgentLike>();
 
 const emptyJudgment: Judgment = {
   consensus: [],
@@ -123,6 +140,33 @@ const emptyJudgment: Judgment = {
   recommendation: "",
   confidence: "low",
 };
+
+export function schemaFailFastAgent(agent: AgentLike): AgentLike {
+  const cached = schemaFailFastAgents.get(agent);
+  if (cached) return cached;
+
+  const wrapped = new Proxy(agent, {
+    get(target, prop, receiver) {
+      if (prop !== "generate") return Reflect.get(target, prop, receiver);
+      return async (args?: unknown): Promise<unknown> => {
+        const result = await target.generate(args);
+        const schema = outputSchemaFromArgs(args);
+        const output = structuredOutputFromResult(result);
+        if (schema && output.present && isStructuredFailFastCandidate(output.value)) {
+          const recovered = safeCoerce(schema as z.ZodType<unknown>, output.value);
+          if (recovered === undefined) {
+            const parsed = schema.safeParse(output.value);
+            throw nonRetryableSchemaError(parsed.success ? undefined : parsed.error);
+          }
+          return replaceStructuredOutput(result, output.field, recovered);
+        }
+        return result;
+      };
+    },
+  });
+  schemaFailFastAgents.set(agent, wrapped);
+  return wrapped;
+}
 
 export async function fuse(input: FuseInput): Promise<FuseResult> {
   const result = await fuseWith({ ...input, schema: finalAnswer });
@@ -155,10 +199,8 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
   const createSmithersLite = createSmithers as unknown as CreateSmithersLite;
   const runWorkflowLite = runWorkflow as unknown as WorkflowRunner;
   const runPromiseLite = Effect.runPromise as unknown as (effect: unknown) => Promise<{ status: RunStatus }>;
-  const { Workflow, Sequence, Parallel, Task, smithers, outputs } = createSmithersLite(
-    { panelResponse, judgment, synthesis: input.schema },
-    { dbPath },
-  );
+  const kit = createSmithersLite({ panelResponse, judgment, synthesis: input.schema }, { dbPath });
+  const { Workflow, Sequence, Parallel, Task, smithers, outputs } = kit;
   const wf = smithers((ctx) => {
     const responses = ctx.outputs.panelResponse ?? [];
     const latestJudgment = ctx.outputs.judgment?.at(-1) ?? emptyJudgment;
@@ -179,7 +221,7 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
                   {
                     id: `panelist-${member.id}`,
                     output: outputs.panelResponse,
-                    agent: member.agent,
+                    agent: schemaFailFastAgent(member.agent),
                     retries,
                     timeoutMs,
                     continueOnFail: true,
@@ -196,7 +238,7 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
             {
               id: "judge",
               output: outputs.judgment,
-              agent: input.judge.agent,
+              agent: schemaFailFastAgent(input.judge.agent),
               retries,
               timeoutMs,
               // Tolerate a failed judge: the synthesizer falls back to an empty
@@ -211,7 +253,7 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
             {
               id: "synthesize",
               output: outputs.synthesis,
-              agent: input.synthesizer.agent,
+              agent: schemaFailFastAgent(input.synthesizer.agent),
               retries,
               timeoutMs,
               continueOnFail: true,
@@ -232,10 +274,19 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
   let judgmentRow: Record<string, unknown> | undefined;
   let outputRow: Record<string, unknown> | undefined;
   try {
-    panelRows = readOutputs(dbPath, runId, tableNameFor("panelResponse"));
+    panelRows = sortPanelRowsByInputOrder(readOutputs(dbPath, runId, tableNameFor("panelResponse")), input.panel);
     judgmentRow = readLatest(dbPath, runId, tableNameFor("judgment"));
     outputRow = readLatest(dbPath, runId, tableNameFor("synthesis"));
   } finally {
+    // Close the smithers write connection. createSmithers opens a bun:sqlite
+    // handle (and registers a process "exit" closer) but exposes no close(), so
+    // a long-lived process calling fuse() repeatedly would leak a file handle
+    // per call. Closing here releases it before the temp db is unlinked.
+    try {
+      (kit as { db?: { close?: () => void } }).db?.close?.();
+    } catch {
+      // Best effort: a failed close must not mask the fusion result/error.
+    }
     if (input.cleanup !== false) {
       cleanupDb(dbPath);
     }
@@ -274,6 +325,59 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
   };
 }
 
+function outputSchemaFromArgs(args: unknown): SchemaLike | undefined {
+  const schema = (args as GenerateArgsWithSchema | undefined)?.outputSchema;
+  return schema && typeof schema.safeParse === "function" ? schema : undefined;
+}
+
+function structuredOutputFromResult(result: unknown): StructuredOutputResult {
+  if (result === null || typeof result !== "object") return { present: false, value: undefined };
+  const r = result as GenerateResultWithOutput;
+  if (r._output !== undefined && r._output !== null) return { present: true, field: "_output", value: r._output };
+  if (r.output !== undefined && r.output !== null) return { present: true, field: "output", value: r.output };
+  return { present: false, value: undefined };
+}
+
+function replaceStructuredOutput(result: unknown, field: "_output" | "output" | undefined, value: unknown): unknown {
+  if (!field || result === null || typeof result !== "object") return result;
+  return { ...(result as Record<string, unknown>), [field]: value };
+}
+
+function isStructuredFailFastCandidate(value: unknown): boolean {
+  return (typeof value === "object" && value !== null) || Array.isArray(value);
+}
+
+function sortPanelRowsByInputOrder(
+  rows: Record<string, unknown>[],
+  panel: PanelMember[],
+): Record<string, unknown>[] {
+  const byNodeId = new Map(panel.map((member, index) => [`panelist-${member.id}`, index]));
+  return rows
+    .map((row, originalIndex) => ({ row, originalIndex, panelIndex: panelIndexForRow(row, byNodeId) }))
+    .sort((a, b) => a.panelIndex - b.panelIndex || a.originalIndex - b.originalIndex)
+    .map(({ row }) => row);
+}
+
+function panelIndexForRow(row: Record<string, unknown>, byNodeId: ReadonlyMap<string, number>): number {
+  const nodeId = typeof row.node_id === "string" ? row.node_id : typeof row.nodeId === "string" ? row.nodeId : undefined;
+  return nodeId === undefined ? Number.POSITIVE_INFINITY : byNodeId.get(nodeId) ?? Number.POSITIVE_INFINITY;
+}
+
+function nonRetryableSchemaError(cause: unknown): SmithersErrorInstance {
+  return new SmithersErrorInstance(
+    "INVALID_OUTPUT",
+    "Task output failed schema validation before smithers retry scheduling.",
+    { failureRetryable: false, issues: zodIssues(cause) },
+    { cause, includeDocsUrl: false },
+  );
+}
+
+function zodIssues(error: unknown): unknown {
+  return error !== null && typeof error === "object" && "issues" in error
+    ? (error as { issues: unknown }).issues
+    : undefined;
+}
+
 export async function runFusion(config: FusionConfig & { prompt: string }): Promise<FuseResult> {
   const env = config.env;
   const panel = buildPanel(config);
@@ -292,7 +396,7 @@ function memberFor(spec: ModelSpec, env?: NodeJS.ProcessEnv): PanelMember {
   return {
     id: resolveModelSpec(spec).id,
     spec,
-    agent: resolveAgent(spec, env) as AgentLike,
+    agent: resolveAgent(spec, env),
   };
 }
 

@@ -79,6 +79,31 @@ describe("fusion hardening", () => {
     await expect(promise).rejects.toBeInstanceOf(FusionError);
   });
 
+  test("returns panel responses in input order even when panelists finish out of order", async () => {
+    // `a` resolves slower than `b`, so by completion time the rows are [b, a];
+    // the result must still be [a, b] (the order the caller listed the panel).
+    const slow = (id: string, ms: number): PanelMember => ({
+      id,
+      spec: id,
+      agent: {
+        supportsNativeStructuredOutput: true,
+        async generate() {
+          await new Promise((r) => setTimeout(r, ms));
+          return { output: { model: id, answer: id, confidence: "high" } };
+        },
+      } as AgentLike & { supportsNativeStructuredOutput: true },
+    });
+    const result = await fuse({
+      prompt: "q",
+      panel: [slow("a", 60), slow("b", 0)],
+      judge: judge(),
+      synthesizer: member("synth", { answer: "done", caveats: [] }),
+      dbPath: dbPath(),
+      runId: `harden-order-${Date.now()}`,
+    });
+    expect(result.panel.map((p) => p.model)).toEqual(["a", "b"]);
+  });
+
   test("drops a malformed panel row but still synthesizes from the valid ones", async () => {
     const result = await fuse({
       prompt: "q",
@@ -92,8 +117,10 @@ describe("fusion hardening", () => {
       runId: `harden-drop-${Date.now()}`,
     });
     expect(result.answer).toBe("done");
-    // The malformed row is filtered; only the valid panelist survives.
-    expect(result.panel.every((p) => typeof p.answer === "string")).toBe(true);
-    expect(result.panel.some((p) => p.model === "good")).toBe(true);
+    // The malformed row is filtered out entirely — only the valid panelist
+    // survives (stronger than "some good exists": asserts the bad one is gone).
+    expect(result.panel).toHaveLength(1);
+    expect(result.panel[0]?.model).toBe("good");
+    expect(result.panel.every((p) => p.model !== "bad")).toBe(true);
   });
 });
