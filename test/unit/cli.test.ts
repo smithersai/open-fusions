@@ -998,13 +998,24 @@ function fakeEngine(dir = "/tmp/smithers-fusions-cli-unit"): SmithersFusionsEngi
 function runner(cli: ReturnType<typeof createCli>) {
   return async (argv: string[]) => {
     let out = "";
-    await cli.serve([...argv, "--json"], {
-      stdout: (s) => {
-        out += s;
-      },
-      exit: () => {},
-      env: {},
-    });
+    // The CLI emits machine JSON only when stdout is not a TTY (how an agent
+    // consumes it). incur reads process.stdout.isTTY directly and ignores the
+    // explicit --json in a real terminal, so force non-TTY for the call to assert
+    // the agent-facing contract regardless of where the suite runs (terminal, CI,
+    // release). bin.ts applies the same override for real `--json` invocations.
+    const prevTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    try {
+      await cli.serve([...argv, "--json"], {
+        stdout: (s) => {
+          out += s;
+        },
+        exit: () => {},
+        env: {},
+      });
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: prevTTY, configurable: true });
+    }
     return JSON.parse(out);
   };
 }

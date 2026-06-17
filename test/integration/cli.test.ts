@@ -134,13 +134,21 @@ test("durable cli reports missing sessions and wrong phases", async () => {
 function runner(cli: ReturnType<typeof createCli>) {
   return async (argv: string[]) => {
     let out = "";
-    await cli.serve([...argv, "--json"], {
-      stdout: (s) => {
-        out += s;
-      },
-      exit: () => {},
-      env: {},
-    });
+    // Force non-TTY so incur emits the agent-facing JSON the assertions parse;
+    // see the unit cli runner and bin.ts for the rationale.
+    const prevTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    try {
+      await cli.serve([...argv, "--json"], {
+        stdout: (s) => {
+          out += s;
+        },
+        exit: () => {},
+        env: {},
+      });
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: prevTTY, configurable: true });
+    }
     return JSON.parse(out);
   };
 }
