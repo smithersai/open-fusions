@@ -1,4 +1,4 @@
-# open-fusions — build guide for coding agents
+# smithers-fusions — build guide for coding agents
 
 > Read this fully before writing code. It encodes the architecture and the exact
 > `smithers-orchestrator` + `incur` APIs you must build against. These APIs are
@@ -6,17 +6,17 @@
 
 ## What we are building
 
-`open-fusions` runs **model fusions locally** and ships a coding loop where **every
+`smithers-fusions` runs **model fusions locally** and ships a coding loop where **every
 step is a fusion**. A "fusion" = fan one prompt across a **panel** of different
 models in parallel → a **judge** model analyzes consensus/contradictions/blind-spots
-→ a **synthesizer** writes one final answer. open-fusions is a **local alternative to a
+→ a **synthesizer** writes one final answer. smithers-fusions is a **local alternative to a
 hosted router** like OpenRouter: it runs the fusion on your machine against your own
 **smithers agents** — the subscription harnesses you're already logged into — with no
 special API key.
 
 It is consumed two ways:
-1. **CLI**: `open-fusions <command>` (built with `incur`).
-2. **Agent skill**: `open-fusions skills add` installs it into any harness; a driving
+1. **CLI**: `smithers-fusions <command>` (built with `incur`).
+2. **Agent skill**: `smithers-fusions skills add` installs it into any harness; a driving
    agent calls each phase as a **separate tool call**, advancing the pipeline one
    step at a time.
 
@@ -69,7 +69,7 @@ src/
   errors.ts            # FusionError, NoModelsError
   fusion.ts            # fuse()/fuseWith() — one durable smithers run (panel→judge→synth) on a temp db, read + cleanup
   pipeline.ts          # buildPipeline(): the ONE durable plan→impl→review→fix workflow with <Approval> gates
-  engine.ts            # OpenFusionsEngine: start/advance/resume/state; deriveStateFromOutputs (pure phase deriver)
+  engine.ts            # SmithersFusionsEngine: start/advance/resume/state; deriveStateFromOutputs (pure phase deriver)
   outputs.ts           # readOutputs(dbPath, runId, table) via bun:sqlite — used by fusion.ts (the engine reads via loadOutputs)
   prompts/
     panelist.ts judge.ts synthesize.ts plan.ts implement.ts review.ts fix.ts   # pure prompt builders
@@ -162,7 +162,7 @@ import { z } from "zod"; // zod v4 — schemas MUST be v4 (smithers reads schema
 
 ```ts
 import { Cli, z, middleware, error } from "incur"; // z is zod v4
-const cli = Cli.create("open-fusions", {
+const cli = Cli.create("smithers-fusions", {
   version: "0.0.0",
   description: "...",
   sync: { suggestions: ["plan a change", "review my branch with a fusion"] },

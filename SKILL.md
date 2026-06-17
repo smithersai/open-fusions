@@ -1,13 +1,13 @@
 ---
-name: open-fusions
-description: Run model fusions for planning, implementing, and reviewing code. Use when one model's opinion isn't enough — open-fusions fans a prompt across a panel of models, judges the responses, and synthesizes one answer. Drives a plan → implement → review → fix loop, one fusion per step, until the panel says LGTM.
-command: open-fusions
+name: smithers-fusions
+description: Run model fusions for planning, implementing, and reviewing code. Use when one model's opinion isn't enough — smithers-fusions fans a prompt across a panel of models, judges the responses, and synthesizes one answer. Drives a plan → implement → review → fix loop, one fusion per step, until the panel says LGTM.
+command: smithers-fusions
 ---
 
-# open-fusions
+# smithers-fusions
 
 A **fusion** asks several models the same thing, has a judge find the consensus and the
-blind spots, and synthesizes one answer. `open-fusions` makes that a local CLI, then uses
+blind spots, and synthesizes one answer. `smithers-fusions` makes that a local CLI, then uses
 it at every step of a coding loop.
 
 Use it when a change is worth more than one model's opinion: non-trivial features,
@@ -17,7 +17,7 @@ set of eyes before and after you write it.
 ## One-shot fusion (a single question)
 
 ```sh
-open-fusions fuse "What's the safest way to add idempotency keys to this endpoint?"
+smithers-fusions fuse "What's the safest way to add idempotency keys to this endpoint?"
 ```
 
 Returns the synthesized answer plus the judge's breakdown. Pass `--json` for structured
@@ -25,33 +25,33 @@ output, `--panel "a,b,c"` and `--judge "id"` to pick models.
 
 ## The coding loop (one fusion per step)
 
-You apply the edits. open-fusions is the fusion brain: it plans, it reviews the
+You apply the edits. smithers-fusions is the fusion brain: it plans, it reviews the
 change summary each step synthesizes (a `{ summary, changes: [{file, description}] }`
 list, not a literal code diff), and it synthesizes fixes. Call one command per step.
 Each command prints a **Next:** call-to-action with the exact command to run next — follow it.
 
 1. **Plan.** A fusion drafts the plan and opens a session.
    ```sh
-   open-fusions plan "add rate limiting and audit logging"
+   smithers-fusions plan "add rate limiting and audit logging"
    ```
    Note the returned `session` id; pass it to every later command.
 
 2. **Implement.** A fusion synthesizes implementation guidance from the plan. Read it,
    then make the actual code changes yourself.
    ```sh
-   open-fusions implement --session <id>
+   smithers-fusions implement --session <id>
    ```
 
 3. **Review.** A fusion reviews the implementation the previous step synthesized
    (against the plan) and returns `lgtm` plus a list of issues.
    ```sh
-   open-fusions review --session <id>
+   smithers-fusions review --session <id>
    ```
 
 4. **Fix.** If `lgtm` is false, a fusion synthesizes fixes for the issues. Apply them,
    then go back to review.
    ```sh
-   open-fusions fix --session <id>
+   smithers-fusions fix --session <id>
    ```
 
 5. **Loop** review → fix until `review` returns `lgtm: true`. Then you're done.
@@ -59,9 +59,9 @@ Each command prints a **Next:** call-to-action with the exact command to run nex
 Check state any time:
 
 ```sh
-open-fusions status --session <id>    # phase, iteration, lgtm
-open-fusions result --session <id>    # full plan + implementation + last review
-open-fusions resume --session <id>    # recover a run interrupted mid-step (crash)
+smithers-fusions status --session <id>    # phase, iteration, lgtm
+smithers-fusions result --session <id>    # full plan + implementation + last review
+smithers-fusions resume --session <id>    # recover a run interrupted mid-step (crash)
 ```
 
 If a command returns `code: "NEEDS_RESUME"`, the run was interrupted mid-step — run
