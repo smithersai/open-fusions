@@ -1,0 +1,5 @@
+[test]
+# Raise the default per-test timeout for the whole suite (see test/setup.ts):
+# smithers-backed fusion tests are heavyweight and time out under load on Bun's
+# 5s default. Preloaded for every `bun test` invocation, including `release`.
+preload = ["./test/setup.ts"]
