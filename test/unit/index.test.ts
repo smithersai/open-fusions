@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import * as openFusions from "../../src/index";
+import * as smithersFusions from "../../src/index";
 
-const api = openFusions as Record<string, unknown>;
+const api = smithersFusions as Record<string, unknown>;
 
 describe("public api barrel", () => {
   test("re-exports the documented function surface", () => {
@@ -9,6 +9,7 @@ describe("public api barrel", () => {
       "fuse",
       "fuseWith",
       "runFusion",
+      "SmithersFusionsEngine",
       "OpenFusionsEngine",
       "isTerminalPhase",
       "resolveAgent",
@@ -25,6 +26,10 @@ describe("public api barrel", () => {
     ]) {
       expect(typeof api[name]).toBe("function");
     }
+  });
+
+  test("keeps OpenFusionsEngine as an alias for the renamed engine", () => {
+    expect(api.OpenFusionsEngine).toBe(api.SmithersFusionsEngine);
   });
 
   test("re-exports the numeric reliability constants", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deriveStateFromOutputs } from "../../src/engine";
+import { SmithersFusionsEngine, deriveStateFromOutputs } from "../../src/engine";
 import { MAX_REVIEW_ITERATIONS } from "../../src/pipeline";
 
 type Row = Record<string, unknown> & { nodeId?: string };
@@ -14,6 +14,23 @@ const gate = (nodeId: string, approved: boolean): Row => ({ nodeId, approved });
 const derive = (outs: Outputs) => deriveStateFromOutputs("run-1", "waiting-approval", outs);
 
 describe("deriveStateFromOutputs", () => {
+  test("defaults durable storage to the smithers-fusions names", () => {
+    const prevSmithers = process.env.SMITHERS_FUSIONS_DIR;
+    const prevOpen = process.env.OPEN_FUSIONS_DIR;
+    delete process.env.SMITHERS_FUSIONS_DIR;
+    delete process.env.OPEN_FUSIONS_DIR;
+    try {
+      expect(new SmithersFusionsEngine().dir).toBe(".smithers-fusions");
+      process.env.SMITHERS_FUSIONS_DIR = "/tmp/smithers-fusions-env";
+      expect(new SmithersFusionsEngine().dir).toBe("/tmp/smithers-fusions-env");
+    } finally {
+      if (prevSmithers === undefined) delete process.env.SMITHERS_FUSIONS_DIR;
+      else process.env.SMITHERS_FUSIONS_DIR = prevSmithers;
+      if (prevOpen === undefined) delete process.env.OPEN_FUSIONS_DIR;
+      else process.env.OPEN_FUSIONS_DIR = prevOpen;
+    }
+  });
+
   test("no outputs → plan phase, no gate", () => {
     expect(derive({})).toMatchObject({ phase: "plan", pendingGate: null, lgtm: null, output: undefined });
   });

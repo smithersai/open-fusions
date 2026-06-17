@@ -76,27 +76,27 @@ test("durable cli drives the full start→implement→review→fix→review→do
   expect(started.session).toBeString();
   expect(started.phase).toBe("plan");
   expect(started.plan.steps[0].title).toBe("step one");
-  expect(started.cta.commands[0].command).toBe(`open-fusions implement --session ${started.session}`);
+  expect(started.cta.commands[0].command).toBe(`smithers-fusions implement --session ${started.session}`);
 
   const implemented = await run(["implement", "--session", started.session]);
   expect(implemented.phase).toBe("implement");
   expect(implemented.implementation.summary).toBe("implemented");
-  expect(implemented.cta.commands[0].command).toBe(`open-fusions review --session ${started.session}`);
+  expect(implemented.cta.commands[0].command).toBe(`smithers-fusions review --session ${started.session}`);
 
   const reviewed = await run(["review", "--session", started.session]);
   expect(reviewed.phase).toBe("review");
   expect(reviewed.lgtm).toBe(false);
-  expect(reviewed.cta.commands[0].command).toBe(`open-fusions fix --session ${started.session}`);
+  expect(reviewed.cta.commands[0].command).toBe(`smithers-fusions fix --session ${started.session}`);
 
   const fixed = await run(["fix", "--session", started.session]);
   expect(fixed.phase).toBe("fix");
   expect(fixed.fix.summary).toBe("implemented");
-  expect(fixed.cta.commands[0].command).toBe(`open-fusions review --session ${started.session}`);
+  expect(fixed.cta.commands[0].command).toBe(`smithers-fusions review --session ${started.session}`);
 
   const approved = await run(["review", "--session", started.session]);
   expect(approved.phase).toBe("done");
   expect(approved.lgtm).toBe(true);
-  expect(approved.cta.commands[0].command).toBe(`open-fusions result --session ${started.session}`);
+  expect(approved.cta.commands[0].command).toBe(`smithers-fusions result --session ${started.session}`);
 
   const status = await run(["status", "--session", started.session]);
   expect(status).toMatchObject({

@@ -20,7 +20,7 @@ describe("outputs", () => {
   });
 
   test("readOutputs returns ordered rows and readLatest returns the last row", () => {
-    const dbPath = join("/tmp", `open-fusions-outputs-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-outputs-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const db = new Database(dbPath);
     db.exec(
@@ -55,14 +55,14 @@ describe("outputs", () => {
   });
 
   test("throws on a missing table rather than returning garbage", () => {
-    const dbPath = join("/tmp", `open-fusions-outputs-missing-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-outputs-missing-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     new Database(dbPath).close();
     expect(() => readOutputs(dbPath, "run-1", "nope_table")).toThrow();
   });
 
   test("leaves malformed JSON-looking strings as raw text", () => {
-    const dbPath = join("/tmp", `open-fusions-outputs-bad-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-outputs-bad-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const db = new Database(dbPath);
     db.exec("CREATE TABLE tiny_output (run_id TEXT, iteration INTEGER, payload TEXT)");

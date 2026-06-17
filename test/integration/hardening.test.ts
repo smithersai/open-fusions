@@ -30,7 +30,7 @@ const judge = () =>
     confidence: "high",
   });
 function dbPath(): string {
-  const p = join("/tmp", `open-fusions-hardening-${Date.now()}-${Math.random()}.db`);
+  const p = join("/tmp", `smithers-fusions-hardening-${Date.now()}-${Math.random()}.db`);
   created.push(p);
   return p;
 }

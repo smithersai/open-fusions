@@ -25,6 +25,11 @@ const fuseRaw = async (): Promise<FuseResult> => ({
 });
 
 describe("cli", () => {
+  test("publishes the smithers-fusions package and bin names", () => {
+    expect(pkg.name).toBe("smithers-fusions");
+    expect(pkg.bin).toEqual({ "smithers-fusions": "./dist/bin.js" });
+  });
+
   test("reports the package version", async () => {
     const cli = createCli({ engine: fakeEngine(), fuseRaw });
     let out = "";
@@ -50,7 +55,7 @@ describe("cli", () => {
   });
 
   test("reports missing sessions before advancing", async () => {
-    const dir = join("/tmp", `open-fusions-cli-unit-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-unit-${Date.now()}-${Math.random()}`);
     const cli = createCli({ engine: fakeEngine(dir), fuseRaw });
 
     const missing = await runner(cli)(["implement", "--session", "missing"]);
@@ -79,7 +84,7 @@ describe("cli", () => {
   });
 
   test("resume drives an interrupted run forward via engine.resume", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-${Date.now()}-${Math.random()}`);
     const recovered: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -105,7 +110,7 @@ describe("cli", () => {
   });
 
   test("a phase command on an interrupted (needsResume) run routes to resume, not a confusing wrong-phase", async () => {
-    const dir = join("/tmp", `open-fusions-cli-needsresume-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-needsresume-${Date.now()}-${Math.random()}`);
     const stuck: EngineState = {
       runId: "unit",
       status: "running",
@@ -127,7 +132,7 @@ describe("cli", () => {
   });
 
   test("review auto-acknowledges a stranded LGTM review gate instead of routing to fix", async () => {
-    const dir = join("/tmp", `open-fusions-cli-stranded-lgtm-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-stranded-lgtm-${Date.now()}-${Math.random()}`);
     const stranded: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -160,7 +165,7 @@ describe("cli", () => {
   });
 
   test("a phase command on a terminal run reports the run is over (not a wrong-phase)", async () => {
-    const dir = join("/tmp", `open-fusions-cli-terminal-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-terminal-${Date.now()}-${Math.random()}`);
     const done: EngineState = {
       runId: "unit",
       status: "finished",
@@ -183,7 +188,7 @@ describe("cli", () => {
   });
 
   test("status surfaces durable failure state", async () => {
-    const dir = join("/tmp", `open-fusions-cli-failed-status-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-failed-status-${Date.now()}-${Math.random()}`);
     const failed: EngineState = {
       runId: "unit",
       status: "failed",
@@ -208,7 +213,7 @@ describe("cli", () => {
   });
 
   test("plan refuses to clobber an existing session id (RUN_EXISTS)", async () => {
-    const dir = join("/tmp", `open-fusions-cli-run-exists-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-run-exists-${Date.now()}-${Math.random()}`);
     const engine = fakeEngine(dir);
     (engine as { start: unknown }).start = async () => {
       throw new Error("Run of-existing already exists");
@@ -222,7 +227,7 @@ describe("cli", () => {
   });
 
   test("plan re-throws a start error that is not an 'already exists' clash", async () => {
-    const dir = join("/tmp", `open-fusions-cli-plan-throw-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-plan-throw-${Date.now()}-${Math.random()}`);
     const engine = fakeEngine(dir);
     (engine as { start: unknown }).start = async () => {
       throw new Error("disk on fire");
@@ -254,7 +259,7 @@ describe("cli", () => {
   });
 
   test("a phase command on a durably failed run reports FUSION_FAILED", async () => {
-    const dir = join("/tmp", `open-fusions-cli-fusion-failed-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-fusion-failed-${Date.now()}-${Math.random()}`);
     const failed: EngineState = {
       runId: "unit",
       status: "failed",
@@ -277,7 +282,7 @@ describe("cli", () => {
   });
 
   test("a phase command on the wrong phase points to the current phase command", async () => {
-    const dir = join("/tmp", `open-fusions-cli-wrong-phase-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-wrong-phase-${Date.now()}-${Math.random()}`);
     // implement command, but the run is sitting in `fix` — should route to review.
     const cur: EngineState = {
       runId: "unit",
@@ -300,7 +305,7 @@ describe("cli", () => {
   });
 
   test("resume reports FUSION_FAILED when recovery lands on a failed run", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-failed-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-failed-${Date.now()}-${Math.random()}`);
     const failed: EngineState = {
       runId: "unit",
       status: "failed",
@@ -321,7 +326,7 @@ describe("cli", () => {
   });
 
   test("resume auto-acknowledges a recovered LGTM gate and points to result (terminal cta)", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-lgtm-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-lgtm-${Date.now()}-${Math.random()}`);
     const recovered: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -351,7 +356,7 @@ describe("cli", () => {
   });
 
   test("resume that auto-advances into a failed run reports FUSION_FAILED", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-advance-failed-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-advance-failed-${Date.now()}-${Math.random()}`);
     const recovered: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -379,7 +384,7 @@ describe("cli", () => {
   });
 
   test("resume that lands on a still-interrupted run points to resume (Recover cta)", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-needs-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-needs-${Date.now()}-${Math.random()}`);
     const stuck: EngineState = {
       runId: "unit",
       status: "running",
@@ -401,7 +406,7 @@ describe("cli", () => {
   });
 
   test("resume on a plan-phase run points to implement", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-plan-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-plan-${Date.now()}-${Math.random()}`);
     const planned: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -422,7 +427,7 @@ describe("cli", () => {
   });
 
   test("resume on an implement-phase run points to review", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-impl-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-impl-${Date.now()}-${Math.random()}`);
     const impl: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -443,7 +448,7 @@ describe("cli", () => {
   });
 
   test("resume on a fix-phase run points to review", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-fix-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-fix-${Date.now()}-${Math.random()}`);
     const fix: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -464,7 +469,7 @@ describe("cli", () => {
   });
 
   test("resume on a review run awaiting acknowledgement (lgtm not false) points to review", async () => {
-    const dir = join("/tmp", `open-fusions-cli-resume-ack-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-resume-ack-${Date.now()}-${Math.random()}`);
     // phase review, lgtm null (not false) and no pendingGate, so the auto-ack
     // branch is skipped and nextCommandFor hits the "Acknowledge the review" arm.
     const review: EngineState = {
@@ -488,18 +493,18 @@ describe("cli", () => {
   });
 
   test("plan starts a run and points to implement", async () => {
-    const dir = join("/tmp", `open-fusions-cli-plan-ok-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-plan-ok-${Date.now()}-${Math.random()}`);
     const engine = fakeEngine(dir);
     const cli = createCli({ engine, fuseRaw });
     const result = await runner(cli)(["plan", "do it", "--panel", "a,b", "--judge", "j"]);
     expect(result.phase).toBe("plan");
     expect(result.session).toBe("unit");
-    expect(result.cta.commands[0].command).toContain("implement --session unit");
+    expect(result.cta.commands[0].command).toBe("smithers-fusions implement --session unit");
     rmSync(dir, { recursive: true, force: true });
   });
 
   test("plan surfaces a needsResume start state", async () => {
-    const dir = join("/tmp", `open-fusions-cli-plan-needs-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-plan-needs-${Date.now()}-${Math.random()}`);
     const stuck: EngineState = {
       runId: "unit",
       status: "running",
@@ -519,7 +524,7 @@ describe("cli", () => {
   });
 
   test("implement advances a plan-phase run into review", async () => {
-    const dir = join("/tmp", `open-fusions-cli-impl-ok-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-impl-ok-${Date.now()}-${Math.random()}`);
     const planned: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -552,7 +557,7 @@ describe("cli", () => {
   });
 
   test("implement surfaces a fusion that fails while advancing", async () => {
-    const dir = join("/tmp", `open-fusions-cli-impl-fail-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-impl-fail-${Date.now()}-${Math.random()}`);
     const planned: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -580,7 +585,7 @@ describe("cli", () => {
   });
 
   test("implement surfaces a needsResume that appears mid-advance", async () => {
-    const dir = join("/tmp", `open-fusions-cli-impl-needs-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-impl-needs-${Date.now()}-${Math.random()}`);
     const planned: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -609,7 +614,7 @@ describe("cli", () => {
   });
 
   test("review on an implement-phase run that returns lgtm false points to fix", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-false-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-false-${Date.now()}-${Math.random()}`);
     const impl: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -643,7 +648,7 @@ describe("cli", () => {
   });
 
   test("review on an implement-phase run that returns lgtm true finishes the run", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-true-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-true-${Date.now()}-${Math.random()}`);
     const impl: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -687,7 +692,7 @@ describe("cli", () => {
   });
 
   test("review surfaces a failed verdict synth as FUSION_FAILED", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-fail-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-fail-${Date.now()}-${Math.random()}`);
     const impl: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -715,7 +720,7 @@ describe("cli", () => {
   });
 
   test("review routes a null-verdict (no lgtm) advance to resume", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-null-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-null-${Date.now()}-${Math.random()}`);
     const impl: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -747,7 +752,7 @@ describe("cli", () => {
   });
 
   test("review auto-ack of a stranded LGTM gate that then fails reports FUSION_FAILED", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-ack-fail-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-ack-fail-${Date.now()}-${Math.random()}`);
     const stranded: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -775,7 +780,7 @@ describe("cli", () => {
   });
 
   test("fix advances a review/lgtm-false run into review", async () => {
-    const dir = join("/tmp", `open-fusions-cli-fix-ok-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-fix-ok-${Date.now()}-${Math.random()}`);
     const needsFix: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -808,7 +813,7 @@ describe("cli", () => {
   });
 
   test("fix surfaces a failed advance as FUSION_FAILED", async () => {
-    const dir = join("/tmp", `open-fusions-cli-fix-fail-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-fix-fail-${Date.now()}-${Math.random()}`);
     const needsFix: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -836,7 +841,7 @@ describe("cli", () => {
   });
 
   test("fix surfaces a needsResume that appears mid-advance", async () => {
-    const dir = join("/tmp", `open-fusions-cli-fix-needs-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-fix-needs-${Date.now()}-${Math.random()}`);
     const needsFix: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -865,7 +870,7 @@ describe("cli", () => {
   });
 
   test("result shows the current run output", async () => {
-    const dir = join("/tmp", `open-fusions-cli-result-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-result-${Date.now()}-${Math.random()}`);
     const st: EngineState = {
       runId: "unit",
       status: "finished",
@@ -888,7 +893,7 @@ describe("cli", () => {
   });
 
   test("result reports a missing session before reading state", async () => {
-    const dir = join("/tmp", `open-fusions-cli-result-missing-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-result-missing-${Date.now()}-${Math.random()}`);
     const engine = fakeEngine(dir);
     const cli = createCli({ engine, fuseRaw });
     const result = await runner(cli)(["result", "--session", "nope"]);
@@ -897,7 +902,7 @@ describe("cli", () => {
   });
 
   test("review on a plan-phase run is wrong-phase and points to implement", async () => {
-    const dir = join("/tmp", `open-fusions-cli-review-wrong-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-review-wrong-${Date.now()}-${Math.random()}`);
     const planned: EngineState = {
       runId: "unit",
       status: "waiting-approval",
@@ -919,7 +924,7 @@ describe("cli", () => {
   });
 
   test("fix on a review-phase run with lgtm true is wrong-phase and points to fix", async () => {
-    const dir = join("/tmp", `open-fusions-cli-fix-wrong-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-fix-wrong-${Date.now()}-${Math.random()}`);
     // phase review but lgtm !== false -> fix command rejects and commandFor("review") === "fix".
     const reviewedLgtm: EngineState = {
       runId: "unit",
@@ -942,7 +947,7 @@ describe("cli", () => {
   });
 
   test("reject denies the pending gate via the engine", async () => {
-    const dir = join("/tmp", `open-fusions-cli-reject-${Date.now()}-${Math.random()}`);
+    const dir = join("/tmp", `smithers-fusions-cli-reject-${Date.now()}-${Math.random()}`);
     let denied: { decision: string; note?: string } | undefined;
     const engine = fakeEngine(dir);
     writeFileSync(engine.dbPathFor("unit"), ""); // reject guards on db existence
@@ -959,7 +964,7 @@ describe("cli", () => {
   });
 });
 
-function fakeEngine(dir = "/tmp/open-fusions-cli-unit"): OpenFusionsEngine {
+function fakeEngine(dir = "/tmp/smithers-fusions-cli-unit"): OpenFusionsEngine {
   mkdirSync(dir, { recursive: true });
   const state: EngineState = {
     runId: "unit",

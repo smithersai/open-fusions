@@ -77,7 +77,7 @@ function countingMember(id: string, output: unknown, calls: { count: number }): 
 
 describe("fuse", () => {
   test("runs panel, judge, and synthesizer through smithers with stub agents", async () => {
-    const dbPath = join("/tmp", `open-fusions-fusion-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-fusion-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const panel = [
       member("model-a", { model: "model-a", answer: "A", confidence: "high" }),
@@ -114,7 +114,7 @@ describe("fuse", () => {
   });
 
   test("does not retry deterministic schema-validation failures", async () => {
-    const dbPath = join("/tmp", `open-fusions-invalid-synth-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-invalid-synth-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const calls = { count: 0 };
     const panel = [member("model-a", { model: "model-a", answer: "A", confidence: "high" })];
@@ -145,7 +145,7 @@ describe("fuse", () => {
   });
 
   test("allows recoverable raw JSON string structured output through fail-fast proxy", async () => {
-    const dbPath = join("/tmp", `open-fusions-recoverable-synth-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-recoverable-synth-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const panel = [member("model-a", { model: "model-a", answer: "A", confidence: "high" })];
     const judge = member("judge", {
@@ -173,7 +173,7 @@ describe("fuse", () => {
   });
 
   test("persists recovered structured synth output instead of the original invalid object", async () => {
-    const dbPath = join("/tmp", `open-fusions-recoverable-object-synth-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-recoverable-object-synth-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const panel = [member("model-a", { model: "model-a", answer: "A", confidence: "high" })];
     const judge = member("judge", {
@@ -222,7 +222,7 @@ describe("fuse", () => {
   });
 
   test("tolerates a panelist whose generate returns no output field", async () => {
-    const dbPath = join("/tmp", `open-fusions-empty-output-${Date.now()}-${Math.random()}.db`);
+    const dbPath = join("/tmp", `smithers-fusions-empty-output-${Date.now()}-${Math.random()}.db`);
     created.push(dbPath);
     const panel = [
       emptyResultMember("model-empty"),
