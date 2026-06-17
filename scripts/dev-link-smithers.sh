@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev-only: point open-fusions at the local smithers 0.24.0 monorepo build
+# Dev-only: point smithers-fusions at the local smithers 0.24.0 monorepo build
 # until the new smithers-orchestrator version is published to npm.
 # After publish: delete these symlinks and `bun install` the published version.
 set -euo pipefail

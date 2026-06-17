@@ -18,7 +18,7 @@ const h = rawJsx;
 const hs = rawJsxs;
 
 /** Safety bound on the review→fix loop so a stubborn diff can't run forever. */
-export const MAX_REVIEW_ITERATIONS = 5;
+export const MAX_REVIEW_ITERATIONS = 16;
 
 export type PhaseRole = "panelist" | "judge" | "synthesizer";
 
@@ -181,7 +181,7 @@ export function buildPipeline(dbPath: string, deps: PipelineDeps) {
       }
     }
 
-    return h(Workflow, { name: "open-fusions", children: hs(Sequence, { children }) });
+    return h(Workflow, { name: "smithers-fusions", children: hs(Sequence, { children }) });
   });
 
   const adapter = new (SmithersDb as unknown as new (db: unknown) => SmithersDb)(

@@ -2,12 +2,12 @@ import { existsSync } from "node:fs";
 import { Cli, z } from "incur";
 import pkg from "../package.json" with { type: "json" };
 import { defaultJudge, defaultPanel } from "./agents";
-import { isTerminalPhase, OpenFusionsEngine, type EngineState } from "./engine";
+import { isTerminalPhase, SmithersFusionsEngine, type EngineState } from "./engine";
 import { runFusion, type FuseResult } from "./fusion";
 import type { FusionConfig } from "./types";
 
 export type CliDeps = {
-  engine: OpenFusionsEngine;
+  engine: SmithersFusionsEngine;
   fuseRaw: (config: FusionConfig & { prompt: string }) => Promise<FuseResult>;
 };
 
@@ -39,10 +39,10 @@ const panelOutput = z.array(
 );
 
 export function createCli(deps?: Partial<CliDeps>) {
-  const engine = deps?.engine ?? new OpenFusionsEngine();
+  const engine = deps?.engine ?? new SmithersFusionsEngine();
   const fuseRaw = deps?.fuseRaw ?? runFusion;
 
-  const cli = Cli.create("open-fusions", {
+  const cli = Cli.create("smithers-fusions", {
     version: pkg.version,
     description: "Run local model fusions and advance the durable plan-implement-review-fix loop.",
     sync: {
@@ -101,7 +101,7 @@ export function createCli(deps?: Partial<CliDeps>) {
     description: "Advance a durable run through implementation.",
     options: z.object({ session: z.string() }),
     output: z.object({ ...baseCommandOutput, implementation: looseOutput }),
-    examples: [{ options: { session: "of-123" }, description: "Run implementation" }],
+    examples: [{ options: { session: "sf-123" }, description: "Run implementation" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
@@ -131,7 +131,7 @@ export function createCli(deps?: Partial<CliDeps>) {
       verdict: looseOutput,
       lgtm: z.boolean(),
     }),
-    examples: [{ options: { session: "of-123" }, description: "Run review" }],
+    examples: [{ options: { session: "sf-123" }, description: "Run review" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
@@ -175,7 +175,7 @@ export function createCli(deps?: Partial<CliDeps>) {
     description: "Advance a durable run through fix.",
     options: z.object({ session: z.string() }),
     output: z.object({ ...baseCommandOutput, fix: looseOutput }),
-    examples: [{ options: { session: "of-123" }, description: "Run fix" }],
+    examples: [{ options: { session: "sf-123" }, description: "Run fix" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
 
@@ -201,7 +201,7 @@ export function createCli(deps?: Partial<CliDeps>) {
     description: "Resume a run interrupted mid-step (crash recovery).",
     options: z.object({ session: z.string() }),
     output: z.object({ ...baseCommandOutput, lgtm: z.boolean().nullable() }),
-    examples: [{ options: { session: "of-123" }, description: "Resume an interrupted run" }],
+    examples: [{ options: { session: "sf-123" }, description: "Resume an interrupted run" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
       let st = await engine.resume(c.options.session);
@@ -227,7 +227,7 @@ export function createCli(deps?: Partial<CliDeps>) {
       note: z.string().optional(),
     }),
     output: z.object({ session: z.string(), phase: z.string() }),
-    examples: [{ options: { session: "of-123" }, description: "Reject the pending gate" }],
+    examples: [{ options: { session: "sf-123" }, description: "Reject the pending gate" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
       const cur = await engine.state(c.options.session);
@@ -251,7 +251,7 @@ export function createCli(deps?: Partial<CliDeps>) {
       pendingGate: z.string().nullable(),
       needsResume: z.boolean(),
     }),
-    examples: [{ options: { session: "of-123" }, description: "Check run status" }],
+    examples: [{ options: { session: "sf-123" }, description: "Check run status" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
       const st = await engine.state(c.options.session);
@@ -276,7 +276,7 @@ export function createCli(deps?: Partial<CliDeps>) {
       lgtm: z.boolean().nullable(),
       output: looseOutput,
     }),
-    examples: [{ options: { session: "of-123" }, description: "Show run output" }],
+    examples: [{ options: { session: "sf-123" }, description: "Show run output" }],
     async run(c) {
       if (!existsSync(engine.dbPathFor(c.options.session))) return missingSession(c, c.options.session);
       const st = await engine.state(c.options.session);
@@ -448,7 +448,7 @@ function noModels(
 ): never {
   // The message already names `smithers agents add` (a separate CLI). No `cta`
   // here: incur prefixes the bin name to cta commands, which would mislead it
-  // into `open-fusions smithers agents add`.
+  // into `smithers-fusions smithers agents add`.
   return c.error({
     code: "NO_MODELS",
     message: e instanceof Error ? e.message : String(e),

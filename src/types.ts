@@ -1,7 +1,7 @@
 import type { Judgment, PanelResponse } from "./schemas";
 
 /**
- * Where a model comes from. open-fusions runs on your own smithers agents:
+ * Where a model comes from. smithers-fusions runs on your own smithers agents:
  * - Subscription harnesses (no API key) — the local CLIs you're logged into,
  *   resolved through the `smithers agents` account registry.
  * - `anthropic` / `openai` — native provider SDKs, billed against an API key.

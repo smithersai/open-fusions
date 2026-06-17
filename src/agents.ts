@@ -29,7 +29,7 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const MAX_DEFAULT_PANEL = 5;
 
 const REGISTER_HINT =
-  "open-fusions runs on your own smithers agents. Register a subscription (no API key needed) with " +
+  "smithers-fusions runs on your own smithers agents. Register a subscription (no API key needed) with " +
   "`smithers agents add` (e.g. claude-code, codex, gemini), or pass an `openrouter:<vendor/model>` / " +
   "`compat:<model>` id.";
 

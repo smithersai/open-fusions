@@ -191,7 +191,7 @@ export async function fuseWith<TSchema extends z.ZodObject<any>>(
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // UUID id + OS temp dir: collision-free across concurrent fusions, portable.
   const runId = input.runId ?? `fusion-${crypto.randomUUID()}`;
-  const dbPath = input.dbPath ?? join(tmpdir(), `open-fusions-${runId}.db`);
+  const dbPath = input.dbPath ?? join(tmpdir(), `smithers-fusions-${runId}.db`);
   // Direct smithers' workflow logs to a temp dir, not stdout — otherwise they
   // pollute `fuse --json` output (smithers logs structured lines to stdout).
   const logDir = `${dbPath}.logs`;

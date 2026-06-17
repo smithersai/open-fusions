@@ -17,7 +17,7 @@ export type EngineState = {
   /**
    * True when the run is mid-flight (a non-terminal phase with no pending gate
    * and the current phase's output not yet produced) — e.g. a crash between
-   * approving a gate and running the next fusion. {@link OpenFusionsEngine.resume}
+   * approving a gate and running the next fusion. {@link SmithersFusionsEngine.resume}
    * drives such a run forward; without it the run would be permanently stuck.
    */
   needsResume: boolean;
@@ -37,7 +37,7 @@ export function isTerminalPhase(phase: EnginePhase): boolean {
 }
 
 export type EngineOptions = {
-  /** Directory holding the per-run durable databases. Default `.open-fusions`. */
+  /** Directory holding the per-run durable databases. Default `.smithers-fusions`. */
   dir?: string;
   /** Resolve a model id + role to an agent. Injectable so tests use stubs. */
   agentFor?: AgentFor;
@@ -61,12 +61,12 @@ type RunReader = {
  * identical workflow (so it works across separate processes), advances it past
  * exactly one approval gate, and derives the run's phase from persisted state.
  */
-export class OpenFusionsEngine {
+export class SmithersFusionsEngine {
   readonly dir: string;
   private readonly agentFor: AgentFor;
 
   constructor(opts: EngineOptions = {}) {
-    this.dir = opts.dir ?? process.env.OPEN_FUSIONS_DIR ?? ".open-fusions";
+    this.dir = opts.dir ?? process.env.SMITHERS_FUSIONS_DIR ?? process.env.OPEN_FUSIONS_DIR ?? ".smithers-fusions";
     this.agentFor = opts.agentFor ?? ((modelId) => resolveAgent(modelId));
   }
 
@@ -198,8 +198,10 @@ export class OpenFusionsEngine {
 function genRunId(): string {
   // UUID, not Date.now()+Math.random(): two runs started in the same process/ms
   // must not collide on a run id (and thus on their durable db path).
-  return `of-${crypto.randomUUID()}`;
+  return `sf-${crypto.randomUUID()}`;
 }
+
+export { SmithersFusionsEngine as OpenFusionsEngine };
 
 async function readOutputs(api: { db: unknown; tables: unknown }, runId: string): Promise<Outputs> {
   return (await loadOutputs(api.db as never, api.tables as never, runId)) as Outputs;
