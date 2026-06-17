@@ -4,7 +4,7 @@
 // honest test of "rebuilt identically on every process, survives restarts".
 //
 // Usage: bun run cross-process-step.ts <start|advance|state> <dir> <runId>
-import { OpenFusionsEngine } from "../../../src/engine";
+import { SmithersFusionsEngine } from "../../../src/engine";
 import type { AgentLike } from "../../../src/types";
 
 // Stateless stub: review ALWAYS returns lgtm, so the loop is
@@ -34,7 +34,7 @@ function stubAgentFor(): () => AgentLike {
 }
 
 const [action, dir, runId] = process.argv.slice(2);
-const engine = new OpenFusionsEngine({ dir, agentFor: stubAgentFor() });
+const engine = new SmithersFusionsEngine({ dir, agentFor: stubAgentFor() });
 
 const st =
   action === "start"

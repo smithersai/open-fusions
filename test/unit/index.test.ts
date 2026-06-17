@@ -10,7 +10,6 @@ describe("public api barrel", () => {
       "fuseWith",
       "runFusion",
       "SmithersFusionsEngine",
-      "OpenFusionsEngine",
       "isTerminalPhase",
       "resolveAgent",
       "resolveModelSpec",
@@ -26,10 +25,6 @@ describe("public api barrel", () => {
     ]) {
       expect(typeof api[name]).toBe("function");
     }
-  });
-
-  test("keeps OpenFusionsEngine as an alias for the renamed engine", () => {
-    expect(api.OpenFusionsEngine).toBe(api.SmithersFusionsEngine);
   });
 
   test("re-exports the numeric reliability constants", () => {

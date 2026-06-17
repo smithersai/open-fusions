@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { OpenFusionsEngine } from "../../src/engine";
+import { SmithersFusionsEngine } from "../../src/engine";
 import type { AgentLike } from "../../src/types";
 
 // Stateful stub: while `failReview` is set, the review SYNTH returns an invalid
@@ -42,7 +42,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 test("a run interrupted mid-fusion (gate committed, synth missing, status running) is resumable, not stuck", async () => {
   const state = { failReview: true };
   const agentFor = makeStubAgentFor(state);
-  const newEngine = () => new OpenFusionsEngine({ dir, agentFor });
+  const newEngine = () => new SmithersFusionsEngine({ dir, agentFor });
   const runId = "run-crash";
 
   await newEngine().start("task", { panel: ["a", "b"], judge: "j" }, runId);
@@ -90,7 +90,7 @@ test("a run interrupted mid-fusion (gate committed, synth missing, status runnin
 
 test("start() refuses to clobber an existing run id (advise resume/advance instead)", async () => {
   const agentFor = makeStubAgentFor({ failReview: false });
-  const engine = new OpenFusionsEngine({ dir, agentFor });
+  const engine = new SmithersFusionsEngine({ dir, agentFor });
   const runId = "run-dupe";
   await engine.start("first task", { panel: ["a"], judge: "j" }, runId);
   await expect(
@@ -100,7 +100,7 @@ test("start() refuses to clobber an existing run id (advise resume/advance inste
 
 test("resume converges permanent synth failure to a non-resumable failed state", async () => {
   const agentFor = makeStubAgentFor({ failReview: true });
-  const newEngine = () => new OpenFusionsEngine({ dir, agentFor });
+  const newEngine = () => new SmithersFusionsEngine({ dir, agentFor });
   const runId = "run-permanent-failure";
 
   await newEngine().start("task", { panel: ["a"], judge: "j" }, runId);

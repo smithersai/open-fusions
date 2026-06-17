@@ -66,7 +66,7 @@ export class SmithersFusionsEngine {
   private readonly agentFor: AgentFor;
 
   constructor(opts: EngineOptions = {}) {
-    this.dir = opts.dir ?? process.env.SMITHERS_FUSIONS_DIR ?? process.env.OPEN_FUSIONS_DIR ?? ".smithers-fusions";
+    this.dir = opts.dir ?? process.env.SMITHERS_FUSIONS_DIR ?? ".smithers-fusions";
     this.agentFor = opts.agentFor ?? ((modelId) => resolveAgent(modelId));
   }
 
@@ -200,8 +200,6 @@ function genRunId(): string {
   // must not collide on a run id (and thus on their durable db path).
   return `sf-${crypto.randomUUID()}`;
 }
-
-export { SmithersFusionsEngine as OpenFusionsEngine };
 
 async function readOutputs(api: { db: unknown; tables: unknown }, runId: string): Promise<Outputs> {
   return (await loadOutputs(api.db as never, api.tables as never, runId)) as Outputs;

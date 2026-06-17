@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { OpenFusionsEngine } from "../../src/engine";
+import { SmithersFusionsEngine } from "../../src/engine";
 import type { AgentLike } from "../../src/types";
 
 // A single deterministic stub agent serves every role/phase by matching the
@@ -55,7 +55,7 @@ test("durable pipeline advances plan→implement→review→fix→review→done 
   // A fresh engine per call models a fresh process resuming the same durable run.
   // Reuse one stub closure (its reviewCount must persist) but rebuild the engine each step.
   const sharedAgentFor = makeStubAgentFor();
-  const newEngine = () => new OpenFusionsEngine({ dir, agentFor: sharedAgentFor });
+  const newEngine = () => new SmithersFusionsEngine({ dir, agentFor: sharedAgentFor });
   const config = { panel: ["model/a", "model/b"], judge: "model/judge" };
 
   // PLAN
@@ -99,7 +99,7 @@ test("durable pipeline advances plan→implement→review→fix→review→done 
 }, 60_000);
 
 test("denying a gate through the real engine stops the run (denyNode + onDeny:continue + deriver)", async () => {
-  const engine = new OpenFusionsEngine({ dir, agentFor: makeStubAgentFor() });
+  const engine = new SmithersFusionsEngine({ dir, agentFor: makeStubAgentFor() });
   const runId = "run-deny";
   const started = await engine.start("add rate limiting", { panel: ["a"], judge: "j" }, runId);
   expect(started.pendingGate).toBe("plan-gate");
@@ -110,7 +110,7 @@ test("denying a gate through the real engine stops the run (denyNode + onDeny:co
 
   // The stopped state is durable across a fresh engine and a terminal phase
   // cannot be advanced further.
-  const reread = await new OpenFusionsEngine({ dir, agentFor: makeStubAgentFor() }).state(runId);
+  const reread = await new SmithersFusionsEngine({ dir, agentFor: makeStubAgentFor() }).state(runId);
   expect(reread.phase).toBe("stopped");
   expect(reread.needsResume).toBe(false);
 }, 60_000);
@@ -140,7 +140,7 @@ test("exhausting the review→fix budget ends in 'exhausted', never a false 'don
     return () => agent as AgentLike;
   };
   const agentFor = neverLgtm();
-  const engine = new OpenFusionsEngine({ dir, agentFor });
+  const engine = new SmithersFusionsEngine({ dir, agentFor });
   const runId = "run-exhaust";
   await engine.start("task", { panel: ["a"], judge: "j" }, runId);
   // Drive the run until it stops progressing (each advance clears one gate).

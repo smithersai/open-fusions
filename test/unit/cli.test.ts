@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountsFilePath } from "@smithers-orchestrator/accounts";
 import { createCli } from "../../src/cli";
-import type { EngineState, OpenFusionsEngine } from "../../src/engine";
+import type { EngineState, SmithersFusionsEngine } from "../../src/engine";
 import type { FuseResult } from "../../src/fusion";
 import pkg from "../../package.json" with { type: "json" };
 
@@ -964,7 +964,7 @@ describe("cli", () => {
   });
 });
 
-function fakeEngine(dir = "/tmp/smithers-fusions-cli-unit"): OpenFusionsEngine {
+function fakeEngine(dir = "/tmp/smithers-fusions-cli-unit"): SmithersFusionsEngine {
   mkdirSync(dir, { recursive: true });
   const state: EngineState = {
     runId: "unit",
@@ -992,7 +992,7 @@ function fakeEngine(dir = "/tmp/smithers-fusions-cli-unit"): OpenFusionsEngine {
     async state() {
       return state;
     },
-  } as unknown as OpenFusionsEngine;
+  } as unknown as SmithersFusionsEngine;
 }
 
 function runner(cli: ReturnType<typeof createCli>) {

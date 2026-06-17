@@ -16,7 +16,7 @@ export type {
 } from "./fusion";
 
 // --- Durable plan→implement→review→fix engine ---
-export { SmithersFusionsEngine, OpenFusionsEngine, isTerminalPhase } from "./engine";
+export { SmithersFusionsEngine, isTerminalPhase } from "./engine";
 export type { EngineState, EngineOptions, RunConfig, EnginePhase } from "./engine";
 export { MAX_REVIEW_ITERATIONS } from "./pipeline";
 export type { AgentFor, PhaseRole } from "./pipeline";

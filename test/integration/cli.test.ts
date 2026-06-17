@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { createCli } from "../../src/cli";
-import { OpenFusionsEngine } from "../../src/engine";
+import { SmithersFusionsEngine } from "../../src/engine";
 import type { FuseResult } from "../../src/fusion";
 import type { Judgment } from "../../src/schemas";
 import type { AgentLike } from "../../src/types";
@@ -68,7 +68,7 @@ const dir = `/tmp/of-cli-${process.pid}-${Math.floor(Math.random() * 1e6)}`;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 test("durable cli drives the full start→implement→review→fix→review→done loop", async () => {
-  const engine = new OpenFusionsEngine({ dir, agentFor: makeStubAgentFor() });
+  const engine = new SmithersFusionsEngine({ dir, agentFor: makeStubAgentFor() });
   const cli = createCli({ engine, fuseRaw });
   const run = runner(cli);
 
@@ -119,7 +119,7 @@ test("durable cli drives the full start→implement→review→fix→review→do
 }, 60_000);
 
 test("durable cli reports missing sessions and wrong phases", async () => {
-  const engine = new OpenFusionsEngine({ dir: `${dir}-errors`, agentFor: makeStubAgentFor() });
+  const engine = new SmithersFusionsEngine({ dir: `${dir}-errors`, agentFor: makeStubAgentFor() });
   const cli = createCli({ engine, fuseRaw });
   const run = runner(cli);
 

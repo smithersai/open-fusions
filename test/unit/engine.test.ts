@@ -16,9 +16,7 @@ const derive = (outs: Outputs) => deriveStateFromOutputs("run-1", "waiting-appro
 describe("deriveStateFromOutputs", () => {
   test("defaults durable storage to the smithers-fusions names", () => {
     const prevSmithers = process.env.SMITHERS_FUSIONS_DIR;
-    const prevOpen = process.env.OPEN_FUSIONS_DIR;
     delete process.env.SMITHERS_FUSIONS_DIR;
-    delete process.env.OPEN_FUSIONS_DIR;
     try {
       expect(new SmithersFusionsEngine().dir).toBe(".smithers-fusions");
       process.env.SMITHERS_FUSIONS_DIR = "/tmp/smithers-fusions-env";
@@ -26,8 +24,6 @@ describe("deriveStateFromOutputs", () => {
     } finally {
       if (prevSmithers === undefined) delete process.env.SMITHERS_FUSIONS_DIR;
       else process.env.SMITHERS_FUSIONS_DIR = prevSmithers;
-      if (prevOpen === undefined) delete process.env.OPEN_FUSIONS_DIR;
-      else process.env.OPEN_FUSIONS_DIR = prevOpen;
     }
   });
 
