@@ -174,7 +174,7 @@ gate; a normal command also tells you to run `resume` when it detects an interru
 | `--panel "a,b,c"` | Comma-separated smithers agent ids for the panel |
 | `--judge "id"` | Agent that judges + synthesizes |
 | `--session "id"` | Target an existing durable run (pin an id on `plan`) |
-| `SMITHERS_FUSIONS_DIR` | Where durable runs are stored (default `.smithers-fusions/`; `OPEN_FUSIONS_DIR` is honored as a fallback) |
+| `SMITHERS_FUSIONS_DIR` | Where durable runs are stored (default `.smithers-fusions/`) |
 
 Panel/judge values are **smithers agent ids** — by default a registered subscription
 harness, named by account label (`codex-1`) or provider (`claude-code`, `codex`, `gemini`),
