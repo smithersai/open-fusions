@@ -31,6 +31,11 @@ One model is one opinion. A **fusion** is many, reconciled:
 One model can be confidently wrong. A disagreeing panel surfaces the risk; the judge and
 synthesizer turn it into a better answer than any single model gave.
 
+The pattern comes from [OpenRouter's research](https://openrouter.ai/blog/announcements/fusion-beats-frontier/):
+a panel + judge can outscore any single frontier model, and a measurable part of the lift is
+the synthesis step itself. smithers-fusions runs that pattern locally, on the coding agents
+you already have.
+
 ## Install
 
 Runs on [Bun](https://bun.sh) (the durable engine uses `bun:sqlite`).
