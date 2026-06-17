@@ -9,6 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial release of open-fusions: a local model-fusion engine that fans prompts across a panel, judges consensus and blind spots, then synthesizes a final answer.
+- Initial release of smithers-fusions: a local model-fusion engine that fans prompts across a panel, judges consensus and blind spots, then synthesizes a final answer.
 - Durable plan -> implement -> review -> fix coding loop where every phase is a fusion.
-- CLI (`open-fusions`) and programmatic APIs (`fuse`, `fuseWith`, `OpenFusionsEngine`) powered by smithers + incur, using the user's own subscription agents by default.
+- CLI (`smithers-fusions`) and programmatic APIs (`fuse`, `fuseWith`, `SmithersFusionsEngine`) powered by smithers + incur, using the user's own subscription agents by default.

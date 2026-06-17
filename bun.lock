@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "open-fusions",
+      "name": "smithers-fusions",
       "dependencies": {
         "@smithers-orchestrator/accounts": "^0.24.0",
         "effect": "^3.21.1",

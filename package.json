@@ -1,5 +1,5 @@
 {
-  "name": "open-fusions",
+  "name": "smithers-fusions",
   "version": "0.1.0",
   "type": "module",
   "description": "Run model fusions locally. Fan a prompt across a panel of models, judge their answers, and synthesize one. Ships a plan -> implement -> review -> fix coding loop where every step is a fusion. Installable as an agent skill or used as a CLI. Powered by smithers + incur.",
@@ -7,7 +7,7 @@
   "author": "wevm",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wevm/open-fusions"
+    "url": "https://github.com/smithersai/smithers-fusions"
   },
   "keywords": [
     "fusion",
@@ -24,7 +24,7 @@
     "codex"
   ],
   "bin": {
-    "open-fusions": "./dist/bin.js"
+    "smithers-fusions": "./dist/bin.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -48,7 +48,8 @@
     "test:unit": "bun test test/unit",
     "test:integration": "bun test test/integration",
     "typecheck": "tsc --noEmit",
-    "dev": "bun run src/bin.ts"
+    "dev": "bun run src/bin.ts",
+    "release": "bun scripts/release.mjs"
   },
   "engines": {
     "bun": ">=1.3.0"
